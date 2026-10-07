@@ -294,10 +294,16 @@ impl SessionEngine for AgentSessionEngine {
     }
 
     fn model_context_window(&self) -> Option<u64> {
+        if self.is_environment_host().unwrap_or(true) {
+            return None;
+        }
         self.resolve_model().ok().map(|model| model.context_window)
     }
 
     fn creation_model(&self) -> Option<(String, String)> {
+        if self.is_environment_host().unwrap_or(true) {
+            return None;
+        }
         let model = self.resolve_registry_model().ok()?;
         Some((model.provider.clone(), model.id))
     }
@@ -337,6 +343,9 @@ impl SessionEngine for AgentSessionEngine {
     /// readiness window missed. Published on the session summary while
     /// the engine owns the file the decision was computed for.
     fn model_fallback_message(&self) -> Option<String> {
+        if self.is_environment_host().unwrap_or(true) {
+            return None;
+        }
         let decision = self
             .restored_model
             .lock()
@@ -511,6 +520,9 @@ impl SessionEngine for AgentSessionEngine {
     }
 
     fn supported_thinking_levels(&self) -> Option<Vec<String>> {
+        if self.is_environment_host().unwrap_or(true) {
+            return Some(vec!["off".into()]);
+        }
         let model = self.resolve_model().ok()?;
         Some(
             pa_ai::models::get_supported_thinking_levels(&model)
@@ -540,6 +552,9 @@ impl SessionEngine for AgentSessionEngine {
     }
 
     fn effective_thinking_level(&self) -> Option<String> {
+        if self.is_environment_host().unwrap_or(true) {
+            return Some("off".into());
+        }
         Some(self.effective_thinking().wire_name().to_string())
     }
 
@@ -609,6 +624,9 @@ impl SessionEngine for AgentSessionEngine {
     }
 
     fn model_metadata(&self) -> Option<Value> {
+        if self.is_environment_host().unwrap_or(true) {
+            return None;
+        }
         let model = self.resolve_model().ok()?;
         Some(json!({
             "id": model.id,

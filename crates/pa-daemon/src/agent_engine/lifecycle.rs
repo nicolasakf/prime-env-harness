@@ -160,6 +160,8 @@ impl AgentSessionEngine {
         // create writes the settings modes — steering "all" by default).
         let queue_modes = std::sync::Mutex::new((None, None));
         Ok(Self {
+            environment: tokio::sync::Mutex::new(None),
+            environment_host: tokio::sync::Mutex::new(None),
             runtime,
             config,
             mcp,
@@ -815,6 +817,9 @@ impl AgentSessionEngine {
     /// worker invokes at every session end — kill, shutdown, the orphan
     /// exit — so the kernel process never outlives the session that owns it.
     pub async fn dispose_kernel(&self) {
+        if let Err(error) = self.leave_environment().await {
+            eprintln!("environment checkpoint failed: {error:#}");
+        }
         let guard = self.session.lock().await;
         if let Some(engine) = guard.as_deref() {
             engine.dispose_kernel().await;
@@ -942,7 +947,10 @@ impl AgentSessionEngine {
     /// routed through the worker's supervisor link. `None` outside a daemon
     /// worker: without a supervisor there is nobody to reach.
     fn extra_host_handlers(&self) -> Option<HostRequestHandlers> {
-        let config = self.config.supervisor_link.as_ref()?;
+        let mut handlers = self.environment_builder_handlers();
+        let Some(config) = self.config.supervisor_link.as_ref() else {
+            return Some(handlers);
+        };
         let sender = Arc::new(LinkAgentMessageController::new(
             Arc::clone(&self.link),
             config.active_session_id.clone(),
@@ -956,7 +964,6 @@ impl AgentSessionEngine {
             Arc::clone(&self.own_summary),
             self.children.clone(),
         ));
-        let mut handlers = HostRequestHandlers::default();
         register_agent_message_host_handlers(sender, &mut handlers);
         register_agent_observe_host_handlers(observer, &mut handlers);
         self.register_bash_notice_host_handlers(&mut handlers);
@@ -1111,7 +1118,8 @@ impl AgentSessionEngine {
                     }
                 }) as pa_core::kernel::shared::BackgroundWorkSettledCallback
             });
-        pa_core::session_engine::engine::create_session(SessionEngineConfig {
+        let participant = self.active_environment().await?;
+        let session_config = SessionEngineConfig {
             telemetry,
             cwd,
             // TS settings.imageModel routing: the daemon owns the routing
@@ -1177,9 +1185,31 @@ impl AgentSessionEngine {
                 wiring.binding = self.kernel_cron_binding().or(wiring.binding);
                 wiring
             }),
-        })
-        .await
-        .inspect(|engine| {
+        };
+        let result = if let Some(port) = self.seat_port()? {
+            pa_core::session_engine::engine::create_seat_session(
+                session_config,
+                port.binding(),
+                port,
+            )
+            .await
+        } else {
+            match participant {
+                Some(instance) => {
+                    pa_core::session_engine::engine::create_seat_session(
+                        session_config,
+                        super::environment_port::binding(
+                            &instance,
+                            &pa_types::environments::SeatId::legacy_agent(),
+                        )?,
+                        Arc::new(super::environment_port::InProcessPort(instance)),
+                    )
+                    .await
+                }
+                None => pa_core::session_engine::engine::create_session(session_config).await,
+            }
+        };
+        result.inspect(|engine| {
             // A queue-mode switch that landed while this build was in
             // flight wrote only the live slot (the build snapshot above
             // predates it, and the agent handle did not exist yet): re-

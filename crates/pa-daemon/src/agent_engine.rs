@@ -51,6 +51,9 @@ pub(crate) mod tests;
 #[cfg(test)]
 pub(crate) use tests::FAUX_TEST_LOCK;
 
+mod environment_builder;
+mod environment_port;
+mod environments;
 mod goalcore;
 mod lifecycle;
 mod turn_types;
@@ -88,8 +91,8 @@ pub(crate) use artifacts::{artifact_reference, now_millis};
 
 pub use config::AgentEngineConfig;
 pub(crate) use config::AutonomousAdmission;
-pub(crate) use config::CreateSessionResources;
 pub use config::SupervisorLinkConfig;
+pub(crate) use config::{CreateSessionResources, EnvironmentSeatConfig};
 use config::{GoalRuntimeHandles, ProducerUsageSink, RestoredSessionModel, StartupScope};
 
 // The `SessionEngine` trait impl moved to the child module whole -
@@ -143,6 +146,9 @@ pub(crate) type SettledKernelRelease =
 
 /// A [`SessionEngine`] running real agent turns.
 pub struct AgentSessionEngine {
+    environment: tokio::sync::Mutex<Option<Arc<pa_environments::ActiveInstance>>>,
+    pub(crate) environment_host:
+        tokio::sync::Mutex<Option<Arc<crate::environment_host::EnvironmentHost>>>,
     pub(crate) runtime: crate::async_safe_runtime::AsyncSafeRuntime,
     pub(crate) config: AgentEngineConfig,
     /// The session-scoped ACP MCP store (TS `session._mcpManager`): shared

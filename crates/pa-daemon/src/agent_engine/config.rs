@@ -90,11 +90,30 @@ pub(super) struct RestoredSessionModel {
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub(crate) struct CreateSessionResources {
+    pub(crate) environment_instance: Option<String>,
+    pub(crate) environment_host: Option<EnvironmentHostConfig>,
+    pub(crate) environment_seat: Option<EnvironmentSeatConfig>,
     pub(crate) system_prompt: Option<String>,
     pub(crate) append_system_prompt: Vec<String>,
     pub(crate) skills: Vec<String>,
     pub(crate) prompt_templates: Vec<String>,
     pub(crate) autonomous: Option<pa_core::autonomous::AgentAutonomousConfig>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EnvironmentHostConfig {
+    pub instance: String,
+    pub builder_token: String,
+    pub seat_defaults: serde_json::Value,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EnvironmentSeatConfig {
+    pub instance: String,
+    pub seat: pa_types::environments::SeatId,
+    pub token: String,
 }
 
 /// The create command's `--models` scope inputs (TS main.ts:548-568 +
