@@ -15,6 +15,10 @@ pub(crate) use config::WorkerConfig;
 // itself does not reference it directly, so allow the unused-import lint deliberately.
 #[allow(unused_imports)]
 use env::KillCloseReason;
+mod environment_commands;
+mod environment_privacy;
+mod environment_role;
+mod environment_wake;
 mod input;
 mod lifecycle;
 mod summary;
@@ -699,6 +703,7 @@ impl Worker {
                 });
             crate::roster_activity::spawn_roster_activity_watch(&events, roster_pushes.clone());
             let runner = TurnRunner {
+                agent_engine: agent_engine.clone(),
                 recovery: Arc::clone(&recovery),
                 core: Arc::clone(&core),
                 input_pauses: input_pauses.clone(),

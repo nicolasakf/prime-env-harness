@@ -1,5 +1,6 @@
 //! One agent turn: the runner that admits queued input, drives the
 //! engine, and settles the result.
+use super::environment_wake::{refresh_wake, WakeRefresh};
 use super::{
     checkpoint_queue_recovery, compact_action_label, create_daemon_event_meta, emit_refinement_row,
     gather_delivery_batch, json, oneshot, session_snapshot, AssistantSnapshot, DaemonOutbound,
@@ -11,6 +12,7 @@ use super::{
 use std::sync::{Arc, Mutex};
 
 pub(super) struct TurnRunner {
+    pub(super) agent_engine: Option<Arc<crate::agent_engine::AgentSessionEngine>>,
     pub(crate) core: Arc<Mutex<SessionCore>>,
     /// The input-pause table (the admission gate holds queued input).
     pub(super) input_pauses: crate::session_input_pause::InputPauseTable,
@@ -44,7 +46,46 @@ pub(super) struct PassivationContext {
     pub(super) worker_token: String,
 }
 
+/// How a seat's wake turn starts.
+enum TurnStart {
+    /// The host already settled this wake; nothing to run.
+    AlreadySettled,
+    Run(Box<WakeRefresh>),
+}
+
 impl TurnRunner {
+    /// Admit a seat's turn with the host. A wake can wait behind the seat's
+    /// previous turn, so a stateless seat's reply carries the view as of now.
+    async fn environment_turn_started(&self, through_seq: u64) -> Result<TurnStart> {
+        use pa_core::session_engine::environments::SeatPort;
+        let port = self
+            .agent_engine
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("seat engine missing"))?
+            .seat_port()?
+            .ok_or_else(|| anyhow::anyhow!("seat port missing"))?;
+        let reply = port
+            .call(pa_types::environments::SeatCall::TurnStarted { through_seq })
+            .await?;
+        Ok(if reply.result["settled"] == true {
+            TurnStart::AlreadySettled
+        } else {
+            TurnStart::Run(Box::new(WakeRefresh {
+                view: reply.view,
+                view_version: reply.view_version,
+                trimmed: serde_json::from_value(reply.result["wake"].clone())?,
+            }))
+        })
+    }
+    async fn environment_turn_settled(&self, through_seq: u64) -> Result<()> {
+        let port = self
+            .agent_engine
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("seat engine missing"))?
+            .seat_port()?
+            .ok_or_else(|| anyhow::anyhow!("seat port missing"))?;
+        port.settled(through_seq).await
+    }
     pub(super) async fn run(self) {
         loop {
             let engine = self.engine.clone();
@@ -242,6 +283,14 @@ impl TurnRunner {
     /// fresh-snapshot fence — so this window only decides whether to
     /// arm.
     pub(super) fn idle_passivation_window(&self) -> Option<std::time::Duration> {
+        // Hosts own a live environment even while their model-less runner parks.
+        if self
+            .agent_engine
+            .as_ref()
+            .is_some_and(|engine| engine.is_environment_host().unwrap_or(true))
+        {
+            return None;
+        }
         let (attached, compacting, shutdown, queued, last_activity, cwd) = {
             let core = self.core.lock().unwrap();
             (
@@ -405,8 +454,43 @@ impl TurnRunner {
     pub(super) async fn run_turn(
         &self,
         engine: std::sync::Arc<dyn SessionEngine>,
-        items: Vec<QueuedItem>,
+        mut items: Vec<QueuedItem>,
     ) {
+        let Some(first) = items.first() else {
+            return;
+        };
+        let environment_sequence = first
+            .custom_message
+            .as_ref()
+            .filter(|row| row["customType"] == "environment_wake")
+            .and_then(|row| row["details"]["through_seq"].as_u64());
+        if let Some(sequence) = environment_sequence {
+            match self.environment_turn_started(sequence).await {
+                Ok(TurnStart::Run(refresh)) => {
+                    if let Some(first) = items.first_mut() {
+                        if let Err(error) = refresh_wake(first, *refresh) {
+                            eprintln!("environment wake refresh failed: {error:#}");
+                        }
+                    }
+                }
+                Ok(TurnStart::AlreadySettled) => {
+                    if let Err(error) = self.environment_turn_settled(sequence).await {
+                        eprintln!("environment acknowledgment failed: {error:#}");
+                    }
+                    self.core.lock().unwrap().busy = false;
+                    self.idle_notify.notify_waiters();
+                    self.work_notify.notify_one();
+                    return;
+                }
+                Err(error) => {
+                    eprintln!("environment turn admission failed: {error:#}");
+                    self.core.lock().unwrap().busy = false;
+                    self.idle_notify.notify_waiters();
+                    self.work_notify.notify_one();
+                    return;
+                }
+            }
+        }
         let Some((first, batched)) = items.split_first() else {
             return;
         };
@@ -1212,6 +1296,32 @@ impl TurnRunner {
                 operation: "turn_end",
             },
         );
+        if let Some(sequence) = environment_sequence {
+            let completed = matches!(*turn_outcome.lock().unwrap(), Some(TurnSettle::Completed));
+            let result = if completed {
+                self.environment_turn_settled(sequence).await
+            } else {
+                use pa_core::session_engine::environments::SeatPort;
+                match self
+                    .agent_engine
+                    .as_ref()
+                    .map(|engine| engine.seat_port())
+                    .transpose()
+                {
+                    Ok(Some(Some(port))) => port
+                        .call(pa_types::environments::SeatCall::TurnFailed {
+                            through_seq: sequence,
+                        })
+                        .await
+                        .map(|_| ()),
+                    Ok(None | Some(None)) => Err(anyhow::anyhow!("seat port missing")),
+                    Err(error) => Err(error),
+                }
+            };
+            if let Err(error) = result {
+                eprintln!("environment turn settlement failed: {error:#}");
+            }
+        }
         let _ = self.emit_action_update(&snapshot);
         self.idle_notify.notify_waiters();
         // The settled prompts' admissions clear (TS `clearAdmission` in

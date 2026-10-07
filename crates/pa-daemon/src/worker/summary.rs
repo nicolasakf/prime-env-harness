@@ -433,7 +433,14 @@ pub(crate) fn session_summary(
         streaming_message: None,
         created: store.map(|s| s.header.timestamp.clone()),
         modified,
-        first_message: store.and_then(crate::session_store::SessionFile::first_message),
+        first_message: store.and_then(|store| {
+            let first = store.first_message();
+            if store.path.with_extension("environment.json").exists() {
+                first.map(|_| super::environment_privacy::PRIVATE_NOTICE.to_owned())
+            } else {
+                first
+            }
+        }),
         parent_session_path: store.and_then(|store| store.header.parent_session.clone()),
         parent_active_session_id: core.parent_active_session_id.clone(),
         parent_session_id: core.parent_session_id.clone(),
@@ -452,6 +459,18 @@ pub(crate) fn session_summary(
         model_fallback_message,
         runtime_kind: Some(core.runtime_kind.clone()),
         unfinished_action_count: Some(0),
+        environment_role: store
+            .filter(|store| !store.path.as_os_str().is_empty())
+            .and_then(|store| std::fs::read(store.path.with_extension("environment.json")).ok())
+            .and_then(|bytes| {
+                serde_json::from_slice::<pa_types::environments::EnvironmentSessionProfile>(&bytes)
+                    .ok()
+            })
+            .and_then(|profile| match profile.role {
+                pa_types::environments::ProfileRole::Host => Some("host".to_owned()),
+                pa_types::environments::ProfileRole::Seat { .. } => Some("seat".to_owned()),
+                pa_types::environments::ProfileRole::Legacy => None,
+            }),
         anthropic_warning_shown: store
             .map(crate::session_store::SessionFile::anthropic_warning_shown),
     }

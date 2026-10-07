@@ -248,7 +248,12 @@ impl Worker {
                             &restored,
                             has_thinking_level,
                         );
-                        if !flagged_model {
+                        if !flagged_model
+                            && !self
+                                .agent_engine
+                                .as_ref()
+                                .is_some_and(|engine| engine.is_environment_host().unwrap_or(true))
+                        {
                             self.engine
                                 .restore_session_model(path, Some(saved.clone()))
                                 .await;
@@ -654,21 +659,72 @@ impl Worker {
         // gate deduplicates it against any racing demand seam, and a
         // build failure still surfaces on the first demand seam exactly
         // as before. Scripted harness engines have no session to build.
+        let model_less_host = match self.prepare_environment_role().await {
+            Ok(host) => host,
+            Err(error) => {
+                return response_failure(
+                    None,
+                    "create",
+                    &format!("environment readiness failed: {error:#}"),
+                    None,
+                )
+            }
+        };
         if let Some(agent_engine) = &self.agent_engine {
-            let engine = std::sync::Arc::clone(agent_engine);
-            tokio::spawn(async move {
-                let Ok(model) = engine.resolve_model() else {
-                    return;
-                };
-                let _ = engine.ensure_core_session_async(&model).await;
-            });
+            if !model_less_host
+                && agent_engine
+                    .participant_binding()
+                    .map_or(true, |binding| binding.is_some())
+            {
+                let ready = async {
+                    agent_engine.active_environment().await?;
+                    let model = agent_engine.resolve_model()?;
+                    agent_engine.ensure_core_session_async(&model).await?;
+                    Ok::<(), anyhow::Error>(())
+                }
+                .await;
+                if let Err(error) = ready {
+                    return response_failure(
+                        None,
+                        "create",
+                        &format!("participant readiness failed: {error:#}"),
+                        None,
+                    );
+                }
+            }
+            if !model_less_host {
+                let engine = std::sync::Arc::clone(agent_engine);
+                tokio::spawn(async move {
+                    let Ok(model) = engine.resolve_model() else {
+                        return;
+                    };
+                    let _ = engine.ensure_core_session_async(&model).await;
+                });
+            }
         }
         // Bind the schedule catalog onto the session (artifact partition,
         // job rebind, scheduler start) — TS `rebindCronJobsToState`.
-        self.bind_scheduled_jobs().await;
+        if !model_less_host {
+            self.bind_scheduled_jobs().await;
+        }
         // Recovery journal writes must not happen while holding the core
         // lock: record_recovery locks the core to read the store.
-        let _ = self.record_recovery(true, "create");
+        let _ = self.record_recovery(
+            true,
+            if model_less_host {
+                "environment_host"
+            } else {
+                "create"
+            },
+        );
+        if let Err(error) = self.restore_environment_inbox() {
+            return response_failure(
+                None,
+                "create",
+                &format!("seat inbox recovery failed: {error:#}"),
+                None,
+            );
+        }
         let session_id = summary.session_id.clone();
         if let Some(registration) = &self.registration {
             registration.notify_session_created(session_id);

@@ -42,6 +42,9 @@ impl Worker {
                 );
             }
         }
+        let environment_preview = self
+            .has_environment_participant()
+            .then(|| super::environment_privacy::PRIVATE_NOTICE.to_owned());
         let images = parse_prompt_images(payload);
         // TS daemon prompts map `resumeIfIdle` to
         // `command.streamingBehavior !== undefined`: while the queued-input
@@ -108,7 +111,7 @@ impl Worker {
                 } else {
                     QueuePriority::Human
                 },
-                preview: None,
+                preview: environment_preview.clone(),
                 message: message.to_string(),
                 custom_message,
                 agent_message: None,

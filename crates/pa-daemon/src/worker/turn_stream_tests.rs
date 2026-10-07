@@ -58,6 +58,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         running_tool_calls: std::collections::HashSet::new(),
     }));
     TurnRunner {
+        agent_engine: None,
         core,
         input_pauses: crate::session_input_pause::InputPauseTable::new(),
         prompt_admissions: crate::prompt_admission::WorkerAdmissions::new(),

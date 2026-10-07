@@ -134,6 +134,7 @@ fn live_feed_runner(engine: Arc<dyn SessionEngine>, socket: std::path::PathBuf) 
         });
     crate::roster_activity::spawn_roster_activity_watch(&events, roster_pushes.clone());
     TurnRunner {
+        agent_engine: None,
         recovery: Arc::new(Mutex::new(None)),
         core,
         input_pauses: crate::session_input_pause::InputPauseTable::new(),

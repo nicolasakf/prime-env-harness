@@ -12,6 +12,51 @@ use crate::protocol::DaemonResponse;
 
 impl Worker {
     pub(crate) async fn dispatch(&self, command_type: &str, payload: &Value) -> DaemonResponse {
+        let participant = self.agent_engine.as_ref().is_some_and(|engine| {
+            engine
+                .participant_binding()
+                .map_or(true, |binding| binding.is_some())
+        });
+        let internal_seat_read = command_type == "get_state"
+            && self.agent_engine.as_ref().is_some_and(|engine| {
+                engine
+                    .create_resources
+                    .read()
+                    .ok()
+                    .and_then(|resources| resources.environment_seat.clone())
+                    .is_some_and(|seat| {
+                        crate::environment_host::authenticate(
+                            &seat.token,
+                            payload["environmentSeatCapability"]
+                                .as_str()
+                                .unwrap_or_default(),
+                        )
+                        .is_ok()
+                    })
+            });
+        if participant
+            && !internal_seat_read
+            && !self.agent_engine.as_ref().is_some_and(|engine| {
+                engine.participant_profile().ok().flatten().map_or_else(
+                    || {
+                        pa_types::environments::EnvironmentSessionProfile::permits_command(
+                            command_type,
+                        )
+                    },
+                    |profile| profile.role.permits_command(command_type),
+                )
+            })
+        {
+            return response_failure(
+                None,
+                command_type,
+                "environment participant policy denies this command",
+                None,
+            );
+        }
+        if let Some(response) = self.dispatch_environment(command_type, payload).await {
+            return response;
+        }
         // Only operations that inspect or change historical branches need hydration.
         // Cancellation is deliberately excluded: it must reach the live turn immediately.
         if matches!(
@@ -64,7 +109,35 @@ impl Worker {
         match command_type {
             "create" => self.handle_create(payload).await,
             "attach" => self.handle_attach(payload),
-            "detach" => self.handle_detach(payload),
+            "detach" => {
+                let response = self.handle_detach(payload);
+                let unattached = self.core.lock().unwrap().attached_client_ids.is_empty();
+                if participant
+                    && unattached
+                    && self
+                        .agent_engine
+                        .as_ref()
+                        .is_some_and(|engine| engine.close_environment_on_detach().unwrap_or(true))
+                {
+                    self.request_abort();
+                    self.await_session_work_settled().await;
+                    if let Some(engine) = &self.agent_engine {
+                        let result = engine.leave_environment().await;
+                        engine.mark_session_closed();
+                        if let Err(error) = result {
+                            return response_failure(
+                                None,
+                                "detach",
+                                &format!(
+                                    "instance stopped with an unavailable checkpoint: {error:#}"
+                                ),
+                                None,
+                            );
+                        }
+                    }
+                }
+                response
+            }
             "prompt" => self.handle_prompt(payload, false).await,
             "prompt_and_wait" => self.handle_prompt(payload, true).await,
             "steer" => self.handle_queue(payload, Lane::Steering),
@@ -102,7 +175,26 @@ impl Worker {
             "clear_queue" => self.handle_clear_queue(),
             "abort_and_clear_queue" => self.handle_abort_and_clear_queue(),
             "get_last_assistant_text" => self.handle_get_last_assistant_text(),
-            "get_connection_state" => self.handle_get_connection_state(),
+            "get_connection_state" => {
+                let mut response = self.handle_get_connection_state();
+                if let Some(data) = response.data.as_mut() {
+                    data["environmentParticipant"] = json!(participant);
+                    if let Some(engine) = &self.agent_engine {
+                        match engine.participant_profile() {
+                            Ok(profile) => data["environmentProfile"] = json!(profile),
+                            Err(error) => {
+                                return response_failure(
+                                    None,
+                                    command_type,
+                                    &format!("invalid participant profile: {error:#}"),
+                                    None,
+                                )
+                            }
+                        }
+                    }
+                }
+                response
+            }
             "get_mcp_connections" => self.handle_get_mcp_connections().await,
             "set_mcp_static_token" => self.handle_set_mcp_static_token(payload).await,
             "remove_mcp_connection" => self.handle_remove_mcp_connection(payload).await,
@@ -395,7 +487,7 @@ impl Worker {
     /// (`abort` and `abort_and_send_queued`) - suspend queued-input
     /// admission, cancel the queue-invisible turn actions, abort the
     /// in-flight compaction, and cancel the running turn.
-    fn request_abort(&self) {
+    pub(super) fn request_abort(&self) {
         {
             let mut core = self.core.lock().unwrap();
             core.abort_requested = true;

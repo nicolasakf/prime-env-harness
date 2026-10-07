@@ -57,6 +57,17 @@ impl OutboundFrame {
         }
     }
 
+    /// `environment_runs_changed`: an environment run saved its first state or
+    /// changed phase (Rust-only extension), re-broadcast daemon-wide by the supervisor so
+    /// every builder's Environments dock group re-reads its runs.
+    pub(crate) fn environment_runs_changed() -> Self {
+        OutboundFrame {
+            payload: br#"{"type":"environment_runs_changed"}"#.to_vec(),
+            outbound_type: "environment_runs_changed",
+            seq: 0,
+        }
+    }
+
     /// `model_catalog_changed`: a background catalog refresh changed what
     /// this worker would answer for `get_model_catalog` (Rust-only
     /// extension over the TS daemon-mode protocol — TS awaits
@@ -209,7 +220,37 @@ struct SessionAttachGuard {
 
 impl Drop for SessionAttachGuard {
     fn drop(&mut self) {
+        let held = self
+            .worker
+            .session_attachments
+            .lock()
+            .unwrap()
+            .contains_key(&self.token);
         self.worker.release_session_attachments(&self.token, true);
+        if held
+            && self
+                .worker
+                .agent_engine
+                .as_ref()
+                .is_some_and(|engine| engine.close_environment_on_detach().unwrap_or(true))
+        {
+            let mut core = self.worker.core.lock().unwrap();
+            if core.created && core.attached_client_ids.is_empty() {
+                // Fence new input before asynchronous cancellation/checkpointing.
+                core.created = false;
+                drop(core);
+                let worker = Arc::clone(&self.worker);
+                tokio::spawn(async move {
+                    let response = worker.dispatch("detach", &json!({})).await;
+                    if !response.success {
+                        eprintln!(
+                            "participant disconnect checkpoint unavailable: {}",
+                            response.error.unwrap_or_default()
+                        );
+                    }
+                });
+            }
+        }
     }
 }
 
@@ -381,8 +422,16 @@ impl Worker {
                                             "outboundType": frame.outbound_type,
                                             "activeSessionId": active_session_id,
                                         });
+                                        let payload = if worker.has_environment_participant() {
+                                            let mut projected = serde_json::from_slice::<Value>(&frame.payload)
+                                                .expect("worker events are JSON");
+                                            super::environment_privacy::project(&mut projected);
+                                            std::borrow::Cow::Owned(serde_json::to_vec(&projected).expect("JSON projection"))
+                                        } else {
+                                            std::borrow::Cow::Borrowed(frame.payload.as_slice())
+                                        };
                                         if worker
-                                            .write_frame(&sink.writer, &header, &frame.payload)
+                                            .write_frame(&sink.writer, &header, &payload)
                                             .await
                                             .is_err()
                                         {
@@ -715,8 +764,17 @@ impl Worker {
         &self,
         sink: &ConnectionSink,
         request_id: &str,
-        response: DaemonResponse,
+        mut response: DaemonResponse,
     ) {
+        if self.has_environment_participant() && response.command != "env" {
+            if let Some(data) = response.data.as_mut() {
+                if response.command == "get_last_assistant_text" {
+                    *data = json!({"text":super::environment_privacy::PRIVATE_NOTICE});
+                } else {
+                    super::environment_privacy::project(data);
+                }
+            }
+        }
         // Flush barrier: every event frame broadcast before this response
         // reaches the connection's writer first, so a command response
         // never overtakes the events its command emitted (the TS worker
