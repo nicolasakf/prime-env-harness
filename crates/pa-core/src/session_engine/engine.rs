@@ -123,6 +123,8 @@ pub struct SessionEngineConfig {
 
 /// An assembled, running session.
 pub struct SessionEngine {
+    /// Authoritative participant binding; absent in builder sessions.
+    pub environment: Option<pa_types::environments::SeatBinding>,
     pub session: AgentSession,
     pub skills: Vec<crate::skills::Skill>,
     /// Skill-loading diagnostics (TS `getSkills().diagnostics`; the
@@ -217,7 +219,49 @@ fn mcp_gating_blocking(
 ///
 /// Panics if the MCP manager mutex is poisoned while wiring telemetry
 /// reporting.
-pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<SessionEngine> {
+pub async fn create_session(config: SessionEngineConfig) -> anyhow::Result<SessionEngine> {
+    create_session_inner(config, None).await
+}
+
+/// Assemble a participant session with explicit environment tools and resources.
+/// # Errors
+/// Returns provider, resource, and persistence assembly errors.
+#[tracing::instrument(skip_all)]
+pub async fn create_seat_session(
+    config: SessionEngineConfig,
+    binding: pa_types::environments::SeatBinding,
+    port: Arc<dyn super::environments::SeatPort>,
+) -> anyhow::Result<SessionEngine> {
+    create_session_inner(config, Some((binding, port))).await
+}
+
+async fn create_session_inner(
+    mut config: SessionEngineConfig,
+    environment: Option<(
+        pa_types::environments::SeatBinding,
+        Arc<dyn super::environments::SeatPort>,
+    )>,
+) -> anyhow::Result<SessionEngine> {
+    let participant = environment.is_some();
+    let stateless_seat = environment.as_ref().is_some_and(|(binding, _)| {
+        binding.agent_context == pa_types::environments::AgentContext::Stateless
+    });
+    let seat_max_output_tokens = environment
+        .as_ref()
+        .and_then(|(binding, _)| binding.max_output_tokens);
+    let seat_attempt = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let seat_views = std::sync::Arc::new(super::environments::ViewBinding::default());
+    if let Some((binding, port)) = &environment {
+        config.tools = super::environments::participant_tools(binding, port, &seat_views);
+        config.custom_system_prompt = Some(super::environments::participant_prompt(binding));
+        config.rlm_subagent_host = None;
+        config.extra_host_handlers = None;
+        config.cron_store = None;
+        config.queued_goal_context_purge = None;
+        config.image_model_router = None;
+        config.additional_skill_paths.clear();
+        config.additional_prompt_paths.clear();
+    }
     let cwd = config.cwd.clone();
     // Session persistence first: the conversation-log path and the resume
     // context both come from the session manager (TS `_rebuildSystemPrompt`
@@ -248,7 +292,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         config.cron_store.clone(),
     );
 
-    let settings = crate::settings::SettingsManager::create(&cwd, &config.agent_dir);
+    let settings = if participant {
+        crate::settings::SettingsManager::in_memory(&crate::settings::Settings::default())
+    } else {
+        crate::settings::SettingsManager::create(&cwd, &config.agent_dir)
+    };
     let service_tier_preference = settings.get_default_service_tier();
     // Captured before `settings` moves into the resource loader: the
     // compaction scheduling budget (`compact.run` prepare check) and the
@@ -261,8 +309,24 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // snapshot is fixed for the session anyway — while the `PI_REQUEST_TIMING`
     // env half stays live inside the wrappers' per-request check.
     let request_timing_settings = settings.get_request_timing();
-    let (mcp_skill_overrides, mcp_generic_servers, built_manager) =
-        mcp_gating(&settings, config.agent_dir.clone()).await?;
+    let (mcp_skill_overrides, mcp_generic_servers, built_manager) = if participant {
+        config.mcp_manager = None;
+        let manager = crate::mcp::McpManager::new(crate::mcp::McpManagerOptions {
+            auth_storage: crate::auth::AuthStorage::in_memory_without_env(
+                &crate::auth::AuthStorageData::default(),
+                Arc::new(crate::auth::NoOAuth),
+            ),
+            get_user_servers: Box::new(|| None),
+            begin_login: None,
+            agent_dir: None,
+            get_catalog_sources: None,
+            remote_source: None,
+            probe_override: None,
+        });
+        (Vec::new(), Vec::new(), manager)
+    } else {
+        mcp_gating(&settings, config.agent_dir.clone()).await?
+    };
     let mcp_manager = config
         .mcp_manager
         .take()
@@ -275,20 +339,24 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             generic_mcp_servers.push(server);
         }
     }
-    let resources = load_resources(ResourceLoaderOptions {
-        cwd: cwd.clone(),
-        agent_dir: config.agent_dir.clone(),
-        settings: Some(settings),
-        extra_builtin_skill_overrides,
-        additional_skill_paths: config.additional_skill_paths.clone(),
-        additional_prompt_paths: config.additional_prompt_paths.clone(),
-        no_skills: false,
-        no_prompt_templates: false,
-        no_context_files: false,
-        system_prompt: config.custom_system_prompt.clone(),
-        append_system_prompt: Vec::new(),
-        ..Default::default()
-    })?;
+    let resources = if participant {
+        crate::resources::LoadedResources::default()
+    } else {
+        load_resources(ResourceLoaderOptions {
+            cwd: cwd.clone(),
+            agent_dir: config.agent_dir.clone(),
+            settings: Some(settings),
+            extra_builtin_skill_overrides,
+            additional_skill_paths: config.additional_skill_paths.clone(),
+            additional_prompt_paths: config.additional_prompt_paths.clone(),
+            no_skills: false,
+            no_prompt_templates: false,
+            no_context_files: false,
+            system_prompt: config.custom_system_prompt.clone(),
+            append_system_prompt: Vec::new(),
+            ..Default::default()
+        })?
+    };
 
     let model = config
         .model
@@ -379,7 +447,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // with a local harness state dir — the sessions whose `refine.*` host
     // requests register, and the only sessions the compact-trigger
     // auto-refine may run for.
-    let auto_refine_allowed = config.rlm_depth.unwrap_or(0) == 0 && local_harness_dir.is_some();
+    let auto_refine_allowed =
+        !participant && config.rlm_depth.unwrap_or(0) == 0 && local_harness_dir.is_some();
     if auto_refine_allowed {
         turn_boundary.register_refine_handlers(&mut handlers);
     }
@@ -471,7 +540,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         on_bootstrap_result,
     );
     let mut tools = config.tools.clone();
-    if !tools.iter().any(|tool| tool.name() == "ipython") {
+    if !participant && !tools.iter().any(|tool| tool.name() == "ipython") {
         let definition = crate::tools::ipython::create_ipython_tool_definition(
             &cwd.to_string_lossy(),
             super::runtime_wiring::ipython_tool_options(provisioner.clone()),
@@ -497,7 +566,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // start stays the fallback.
     let prewarm_configured =
         config.prewarm_ipython_kernel.unwrap_or(false) && config.rlm_depth.unwrap_or(0) == 0;
-    if (prewarm_configured || has_snapshot)
+    if !participant
+        && (prewarm_configured || has_snapshot)
         && active_tool_names.iter().any(|name| name == "ipython")
     {
         provisioner.prewarm();
@@ -510,36 +580,43 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // captured before `model_info` moves into the turn-boundary handler.
     let prompt_model_selector = Some(format!("{}/{}", model_info.provider, model_info.id));
     let prompt_vision_capable = Some(model_info.input.contains(&pa_types::ai::ModelInput::Image));
-    let system_prompt = crate::prompts::system_prompt::build_system_prompt(
-        &crate::prompts::system_prompt::BuildSystemPromptOptions {
-            custom_prompt: resources.system_prompt.clone(),
-            model: prompt_model_selector.as_deref(),
-            vision_capable: prompt_vision_capable,
-            cwd: cwd.display().to_string(),
-            messages_path: conversation_log.clone(),
-            context_files: resources
-                .agents_files
-                .iter()
-                .map(|file| (file.path.display().to_string(), file.content.clone()))
-                .collect(),
-            skills: resources.skills.clone(),
-            selected_tools: Some(
-                active_tool_names
+    let system_prompt = if participant {
+        config.custom_system_prompt.clone().unwrap_or_default()
+    } else {
+        crate::prompts::system_prompt::build_system_prompt(
+            &crate::prompts::system_prompt::BuildSystemPromptOptions {
+                custom_prompt: resources.system_prompt.clone(),
+                model: prompt_model_selector.as_deref(),
+                vision_capable: prompt_vision_capable,
+                cwd: cwd.display().to_string(),
+                messages_path: conversation_log.clone(),
+                context_files: resources
+                    .agents_files
                     .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-            ),
-            allow_recursion: config.allow_recursion,
-            // The session's recursion depth rides the dynamic tail's
-            // session-role section: a spawned child's prompt must read
-            // "depth: N (not root)" with the child-agent reply doctrine,
-            // never the root identity.
-            rlm_depth: config.rlm_depth,
-            generic_mcp_servers,
-            prompt_guidelines: Some(prompt_guidelines),
-            ..Default::default()
-        },
-    );
+                    .map(|file| (file.path.display().to_string(), file.content.clone()))
+                    .collect(),
+                skills: resources.skills.clone(),
+                selected_tools: Some(
+                    active_tool_names
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>(),
+                ),
+                allow_recursion: config.allow_recursion,
+                // The session's recursion depth rides the dynamic tail's
+                // session-role section: a spawned child's prompt must read
+                // "depth: N (not root)" with the child-agent reply doctrine,
+                // never the root identity.
+                rlm_depth: config.rlm_depth,
+                generic_mcp_servers,
+                prompt_guidelines: Some(prompt_guidelines),
+                // Set by the Prime Environment Harness application at startup
+                // and inherited by its daemon and workers.
+                environment_harness: std::env::var_os("PRIME_ENV_HARNESS_APP").is_some(),
+                ..Default::default()
+            },
+        )
+    };
 
     // Harness digest inputs: global state from the agent dir, local state
     // from the session artifacts (or the daemon-owned conversation log), and
@@ -626,7 +703,15 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         },
         stream_fn: Some(super::request_timing::instrument_stream_fn(
             std::sync::Arc::clone(&request_timing_wiring),
-            stream_fn,
+            if participant {
+                super::environments::limited_stream(
+                    stream_fn,
+                    seat_max_output_tokens,
+                    std::sync::Arc::clone(&seat_attempt),
+                )
+            } else {
+                stream_fn
+            },
         )),
         // The session conversion rules apply at the loop's LLM boundary
         // (TS `convertToLlm`): bookkeeping custom rows drop, everything
@@ -644,7 +729,15 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         // gets its dispatch timestamp.
         transform_context: Some(super::request_timing::instrument_transform_context(
             std::sync::Arc::clone(&request_timing_wiring),
-            super::request_timing::pass_through_transform(),
+            if participant {
+                super::environments::seat_context(
+                    stateless_seat,
+                    std::sync::Arc::clone(&seat_attempt),
+                    std::sync::Arc::clone(&seat_views),
+                )
+            } else {
+                super::request_timing::pass_through_transform()
+            },
         )),
         // TS `_steeringStopPending`: both the after-turn and the
         // before-turn hooks consult the same probe (a queued steer stops
@@ -671,7 +764,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         agent.clone(),
         wiring.session.clone(),
         resources.prompts.clone(),
-        Some(digest_context),
+        (!participant).then_some(digest_context),
     )
     .await?;
     session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
@@ -692,12 +785,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // resolve their model through the `auxiliaryModel` setting with the
     // session model as fallback, so their one-off prompts stay off the
     // session's prompt-cache prefix.
-    session.set_auxiliary_model_context(
-        crate::session_engine::auxiliary_model::AuxiliaryModelContext {
-            cwd,
-            agent_dir: config.agent_dir.clone(),
-        },
-    );
+    if !participant {
+        session.set_auxiliary_model_context(
+            crate::session_engine::auxiliary_model::AuxiliaryModelContext {
+                cwd,
+                agent_dir: config.agent_dir.clone(),
+            },
+        );
+    }
     // The kernel-state probe behind the post-compaction `ipython_state`
     // notice (TS `AgentSession._ipythonKernelProvisioner`): the engine's
     // provisioner is the session's kernel whether it added the `ipython`
@@ -712,7 +807,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     > = std::sync::Arc::new(crate::session_engine::ipython_state::EngineOwnedProbe::new(
         std::sync::Arc::downgrade(&provisioner),
     ));
-    session.set_kernel_state_probe(Some(kernel_state_probe));
+    session.set_kernel_state_probe((!participant).then_some(kernel_state_probe));
     // The skill inventory `/skill:<name>` submissions expand against (TS
     // reads the resource loader at expansion time; the session snapshots
     // the engine's loaded list).
@@ -800,6 +895,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     }
     let goal_driver = wiring.runtime.goal_driver().clone();
     Ok(SessionEngine {
+        environment: environment.map(|(binding, _)| binding),
         session,
         skills: resources.skills,
         skill_diagnostics: resources.skill_diagnostics,
@@ -878,6 +974,12 @@ impl SessionEngine {
         text: &str,
         options: PromptOptions,
     ) -> anyhow::Result<PromptOutcome> {
+        if self.environment.is_some()
+            && text.trim_start().starts_with('/')
+            && !text.trim_start().starts_with("/compact")
+        {
+            anyhow::bail!("participant messages must pass through the environment input handler");
+        }
         self.session.prompt(text, options).await
     }
 
@@ -928,5 +1030,6 @@ impl SessionEngine {
 
 // The unit battery lives in the child module (engine::tests); its use-super
 // glob resolves through this facade's bindings and re-exports.
+
 #[cfg(test)]
 mod tests;
