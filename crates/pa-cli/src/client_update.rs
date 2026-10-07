@@ -15,6 +15,9 @@ pub struct ClientUpdate;
 impl pa_tui::update_command::UpdateCommands for ClientUpdate {
     fn run_update(&self) -> pa_tui::update_command::UpdateRunFuture {
         Box::pin(async {
+            if std::env::var_os("PRIME_ENV_HARNESS_APP").is_some() {
+                return Err("Fork updates are built from nicolasakf/prime-env-harness; upstream installers are disabled.".into());
+            }
             match installer::run_installer(
                 Some(crate::installer_update::requested_installer_channel(None)),
                 InstallerOutput::Capture,

@@ -440,7 +440,11 @@ fn spawn_child(socket: &Path, slave: &OwnedFd) -> Child {
     // and claim the pty slave as the controlling terminal.
     fn claim_controlling_tty(fd: i32) -> std::io::Result<()> {
         nix::unistd::setsid()?;
-        let rc = unsafe { libc::ioctl(fd, libc::TIOCSCTTY as libc::c_ulong, 0) };
+        #[cfg(target_os = "linux")]
+        let controlling_terminal = libc::TIOCSCTTY;
+        #[cfg(not(target_os = "linux"))]
+        let controlling_terminal: libc::c_ulong = libc::TIOCSCTTY.into();
+        let rc = unsafe { libc::ioctl(fd, controlling_terminal, 0) };
         if rc < 0 {
             return Err(std::io::Error::last_os_error());
         }

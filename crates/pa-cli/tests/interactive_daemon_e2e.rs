@@ -30,6 +30,7 @@
 #![cfg(unix)]
 
 use std::fmt::Write as _;
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -458,7 +459,10 @@ fn spawn_supervisor(dir: &Path) -> Supervisor {
     // running, so the kernel SIGKILLs it the moment its parent dies. The
     // guard's protocol teardown below stays the normal exit path; this is
     // the backstop. The per-test guards drop before the owning harness
-    // thread can exit, so the early-fire window is empty.
+    // thread can exit, so the early-fire window is empty. Linux-only:
+    // `prctl(PR_SET_PDEATHSIG)` has no macOS equivalent, where the guards'
+    // protocol teardown is the only exit path.
+    #[cfg(target_os = "linux")]
     unsafe {
         command.pre_exec(move || {
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);

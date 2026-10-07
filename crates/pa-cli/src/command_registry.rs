@@ -468,6 +468,17 @@ fn pad_end(value: &str, width: usize) -> String {
 
 /// The full `--help` output, mirroring `formatTopLevelHelp`.
 pub fn format_top_level_help() -> String {
+    let environment_app = std::env::var_os("PRIME_ENV_HARNESS_APP").is_some();
+    let app_name = if environment_app {
+        "prime-env-harness"
+    } else {
+        APP_NAME
+    };
+    let purpose = if environment_app {
+        "Build and run executable environments on Prime"
+    } else {
+        "AI coding assistant with a Python REPL tool"
+    };
     let commands: Vec<&CommandSpec> = COMMAND_SPECS
         .iter()
         .filter(|spec| spec.path.len() == 1)
@@ -477,7 +488,7 @@ pub fn format_top_level_help() -> String {
         .map(|spec| spec.path[0].len())
         .max()
         .unwrap_or(0);
-    let options = TOP_LEVEL_OPTION_GROUPS
+    let mut options = TOP_LEVEL_OPTION_GROUPS
         .iter()
         .map(|group| {
             let width = group
@@ -495,22 +506,29 @@ pub fn format_top_level_help() -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n");
+    if environment_app {
+        options.push_str("\n\nEnvironment harness:\n  --data-dir <directory>  Isolated application state (default: ~/.prime-env-harness)\n\nIn chat: /env list, /env create, /env policy, /env validate, /env save,\n         /env enter, /env act, /env status, /env leave, /env resume.\nPython execution and Docker isolation are independent, optional choices.");
+    }
     let command_lines: Vec<String> = commands
         .iter()
         .map(|spec| {
             format!(
                 "  {}  {}",
                 pad_end(spec.path[0], command_width),
-                spec.summary
+                if environment_app && spec.path == ["update"] {
+                    "Manual builds from nicolasakf/prime-env-harness; upstream installers disabled"
+                } else {
+                    spec.summary
+                }
             )
         })
         .collect();
     format!(
-        "{APP_NAME} - AI coding assistant with a Python REPL tool\n\
+        "{app_name} - {purpose}\n\
          \n\
          Usage:\n\
-         \x20 {APP_NAME} [options] [@files...] [message...]\n\
-         \x20 {APP_NAME} <command> [args...]\n\
+         \x20 {app_name} [options] [@files...] [message...]\n\
+         \x20 {app_name} <command> [args...]\n\
          \n\
          Options:\n\
          {options}\n\
@@ -518,13 +536,17 @@ pub fn format_top_level_help() -> String {
          Commands:\n\
          {}\n\
          \n\
-         Run \"{APP_NAME} help <command>\" for command details.",
+         Run \"{app_name} help <command>\" for command details.",
         command_lines.join("\n")
     )
 }
 
 /// Per-command help output, mirroring `formatCommandHelp`.
 pub fn format_command_help(path: &[&str]) -> Option<String> {
+    let environment_app = std::env::var_os("PRIME_ENV_HARNESS_APP").is_some();
+    if environment_app && path == ["update"] {
+        return Some("Prime Environment Harness updates are manual Cargo builds from nicolasakf/prime-env-harness. Upstream installers are disabled.".into());
+    }
     let spec = get_command_spec(path)?;
     let children = get_child_command_specs(path);
     let mut sections = vec![
@@ -566,7 +588,12 @@ pub fn format_command_help(path: &[&str]) -> Option<String> {
             sections.push(format!("  {APP_NAME} {example}"));
         }
     }
-    Some(sections.join("\n"))
+    let help = sections.join("\n");
+    Some(if environment_app {
+        help.replace(APP_NAME, "prime-env-harness")
+    } else {
+        help
+    })
 }
 
 #[cfg(test)]

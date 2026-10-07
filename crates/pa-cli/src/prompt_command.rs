@@ -121,6 +121,7 @@ fn assemble_breakdown(
             allow_recursion: Some(true),
             generic_mcp_servers: generic_servers,
             rlm_depth: Some(0),
+            environment_harness: std::env::var_os("PRIME_ENV_HARNESS_APP").is_some(),
             ..Default::default()
         },
     ))

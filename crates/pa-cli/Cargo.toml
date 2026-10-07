@@ -23,6 +23,10 @@ serde_json = { workspace = true }
 name = "prime-agent"
 path = "src/main.rs"
 
+[[bin]]
+name = "prime-env-harness"
+path = "src/environment_main.rs"
+
 [dev-dependencies]
 tempfile = "3"
 base64 = "0.22"

@@ -31,6 +31,8 @@ pub(crate) mod client_update;
 pub(crate) mod codex_subscription_login;
 pub(crate) mod command_registry;
 pub(crate) mod config;
+mod environment_app;
+pub use environment_app::environment_main;
 pub(crate) mod config_command;
 pub(crate) mod daemon_client;
 pub(crate) mod daemon_command;

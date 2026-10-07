@@ -11,6 +11,9 @@
     clippy::cast_sign_loss,
     clippy::cast_precision_loss
 )]
+// Linux-only: the fd-set audit scans `/proc/*/fd` and resolves the pty slave
+// with `ptsname_r`, neither of which exists on macOS.
+#![cfg(target_os = "linux")]
 
 //! The termios + process-tree exit audit (the companion to the landed kitty
 //! fix #3001 and the terminal-state differential #3002): the state BELOW
