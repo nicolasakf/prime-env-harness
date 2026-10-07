@@ -4,6 +4,7 @@ pub mod anthropic;
 pub mod azure_openai_responses;
 pub mod bedrock;
 pub mod faux;
+pub(crate) mod gateway_routing;
 pub mod google;
 pub mod google_shared;
 pub mod google_stream;

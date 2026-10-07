@@ -142,3 +142,112 @@ data: {"type":"message_stop"}"#,
         StopReason::ToolUse
     );
 }
+
+/// Sends one request through `stream_anthropic` to a local server and returns
+/// the JSON body that went over the wire. `host_path` is appended to the base
+/// URL so a test can make it look like a gateway endpoint.
+async fn wire_request_body(
+    host_path: &str,
+    compat: Option<serde_json::Value>,
+) -> serde_json::Value {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        let body = loop {
+            let read = socket.read(&mut chunk).await.unwrap();
+            request.extend_from_slice(&chunk[..read]);
+            let text = String::from_utf8_lossy(&request).into_owned();
+            let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                continue;
+            };
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")?
+                        .trim()
+                        .parse::<usize>()
+                        .ok()
+                })
+                .unwrap();
+            if body.len() >= length {
+                break body.to_string();
+            }
+        };
+        let sse = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{sse}",
+                    sse.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        body
+    });
+    let mut model: Model = serde_json::from_value(json!({
+        "id": "vendor/model", "name": "Model", "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway", "baseUrl": format!("http://{addr}{host_path}"),
+        "reasoning": false, "input": ["text"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 128_000, "maxTokens": 8192
+    }))
+    .unwrap();
+    model.compat = compat.map(|raw| serde_json::from_value(raw).unwrap());
+    let options = AnthropicOptions::from_base(StreamOptions {
+        api_key: Some("test-key".into()),
+        ..Default::default()
+    });
+    let mut reader = stream_anthropic(&model, &Context::default(), Some(&options));
+    while reader.next_event().await.is_some() {}
+    serde_json::from_str(&server.await.unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn gateway_messages_request_carries_the_only_restriction() {
+    let body = wire_request_body(
+        "/ai-gateway.vercel.sh",
+        Some(json!({
+            "supportsLongCacheRetention": false,
+            "vercelGatewayRouting": { "only": ["relace"] }
+        })),
+    )
+    .await;
+    assert_eq!(
+        body["providerOptions"],
+        json!({ "gateway": { "only": ["relace"] } })
+    );
+}
+
+#[tokio::test]
+async fn gateway_messages_request_keeps_only_and_order_separate() {
+    let body = wire_request_body(
+        "/ai-gateway.vercel.sh",
+        Some(json!({ "vercelGatewayRouting": { "only": ["a"], "order": ["b", "a"] } })),
+    )
+    .await;
+    assert_eq!(
+        body["providerOptions"],
+        json!({ "gateway": { "only": ["a"], "order": ["b", "a"] } })
+    );
+}
+
+#[tokio::test]
+async fn non_gateway_messages_request_has_no_provider_options() {
+    let routed = wire_request_body(
+        "",
+        Some(json!({ "vercelGatewayRouting": { "only": ["relace"] } })),
+    )
+    .await;
+    let plain = wire_request_body("", None).await;
+    let gateway_without_routing = wire_request_body("/ai-gateway.vercel.sh", None).await;
+    assert_eq!(routed, plain);
+    assert_eq!(gateway_without_routing, plain);
+    assert!(plain.get("providerOptions").is_none());
+}

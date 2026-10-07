@@ -151,15 +151,20 @@ pub struct AnthropicOptions {
 }
 
 /// Resolved anthropic compat (`Required<AnthropicMessagesCompat>`).
+#[derive(Debug, PartialEq, Eq)]
 pub struct ResolvedAnthropicCompat {
     pub supports_eager_tool_input_streaming: bool,
     pub supports_long_cache_retention: bool,
 }
 
 pub fn get_anthropic_compat(model: &Model) -> ResolvedAnthropicCompat {
-    let compat = model.compat_kind().and_then(|kind| match kind {
-        crate::types::CompatKind::AnthropicMessages(compat) => Some(compat),
-        _ => None,
+    // Read the raw object like TS: a compat that also carries keys of another
+    // shape (e.g. gateway routing) must not hide the Anthropic fields.
+    let compat = model.compat.as_ref().and_then(|compat| {
+        serde_json::from_value::<crate::types::AnthropicMessagesCompat>(Value::Object(
+            compat.raw.clone(),
+        ))
+        .ok()
     });
     ResolvedAnthropicCompat {
         supports_eager_tool_input_streaming: compat
@@ -631,5 +636,47 @@ mod subscription_identity_tests {
         assert_eq!(header("x-app"), Some("cli"));
         let beta = header("anthropic-beta").expect("the OAuth request sends the claude-code beta");
         assert!(beta.contains("claude-code-20250219"));
+    }
+}
+
+#[cfg(test)]
+mod compat_tests {
+    use super::{get_anthropic_compat, ResolvedAnthropicCompat};
+    use crate::types::{zero_model_cost, Model, ModelCompat, ModelInput};
+
+    fn model_with_compat(compat: serde_json::Value) -> Model {
+        Model {
+            id: "vendor/model".into(),
+            name: "Model".into(),
+            api: "anthropic-messages".into(),
+            provider: "vercel-ai-gateway".into(),
+            base_url: "https://ai-gateway.vercel.sh".into(),
+            reasoning: false,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost: zero_model_cost(),
+            context_window: 200_000,
+            max_tokens: 32_000,
+            featured: None,
+            headers: None,
+            compat: Some(serde_json::from_value::<ModelCompat>(compat).unwrap()),
+        }
+    }
+
+    /// Fields of another compat shape beside the Anthropic ones (gateway
+    /// routing) must not hide them: TS reads each field off the raw object.
+    #[test]
+    fn anthropic_fields_survive_beside_gateway_routing() {
+        let model = model_with_compat(serde_json::json!({
+            "supportsLongCacheRetention": false,
+            "vercelGatewayRouting": { "only": ["relace"] }
+        }));
+        assert_eq!(
+            get_anthropic_compat(&model),
+            ResolvedAnthropicCompat {
+                supports_eager_tool_input_streaming: true,
+                supports_long_cache_retention: false,
+            }
+        );
     }
 }

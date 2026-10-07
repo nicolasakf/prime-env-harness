@@ -152,6 +152,69 @@ pub fn effective_request_max_tokens(model: &Model, reasoning: ModelThinkingLevel
     }
 }
 
+/// The `(max_tokens, reasoning)` to send so one request emits at most `cap`
+/// tokens in total, thinking included. Budget-folding providers (Anthropic-style,
+/// and Bedrock Claude, on models without adaptive thinking) send `max_tokens`
+/// plus the level's default thinking budget, so the base shrinks by that budget
+/// and a level whose budget would take over half the cap steps down to one that
+/// fits; every other provider sends `max_tokens` as is. The cap never exceeds
+/// the model's own maximum.
+#[must_use]
+pub fn cap_request_output(
+    model: &Model,
+    reasoning: ModelThinkingLevel,
+    cap: u64,
+) -> (u64, ModelThinkingLevel) {
+    let cap = if model.max_tokens > 0 {
+        cap.min(model.max_tokens)
+    } else {
+        cap
+    };
+    // The provider decides per API id whether the budget is added on top of
+    // `max_tokens`; "anthropic-messages" is the id the Anthropic provider serves.
+    let budget_folds = match model.api.as_str() {
+        "anthropic" | "anthropic-messages" => {
+            !crate::providers::anthropic::supports_adaptive_thinking(&model.id)
+        }
+        "bedrock" => {
+            crate::providers::bedrock::is_anthropic_claude_model(model)
+                && !crate::providers::bedrock::supports_adaptive_thinking(
+                    &model.id,
+                    Some(&model.name),
+                )
+        }
+        _ => false,
+    };
+    let requested = clamp_reasoning(reasoning);
+    if requested == ModelThinkingLevel::Off || !budget_folds {
+        return (cap, reasoning);
+    }
+    let budget_of = |level: ModelThinkingLevel| match level {
+        ModelThinkingLevel::Minimal => 1_024,
+        ModelThinkingLevel::Low => 2_048,
+        ModelThinkingLevel::Medium => 8_192,
+        ModelThinkingLevel::High
+        | ModelThinkingLevel::Xhigh
+        | ModelThinkingLevel::Max
+        | ModelThinkingLevel::Off => 16_384,
+    };
+    // Highest level, no higher than requested, whose budget leaves the answer
+    // at least half the cap.
+    let level = [
+        ModelThinkingLevel::High,
+        ModelThinkingLevel::Medium,
+        ModelThinkingLevel::Low,
+    ]
+    .into_iter()
+    .filter(|level| budget_of(*level) <= budget_of(requested))
+    .find(|level| budget_of(*level) <= cap / 2)
+    .unwrap_or(ModelThinkingLevel::Minimal);
+    (
+        cap.saturating_sub(budget_of(level)).max(MIN_OUTPUT_TOKENS),
+        level,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,6 +282,69 @@ mod tests {
         assert_eq!(
             effective_request_max_tokens(&bare, ModelThinkingLevel::High),
             0
+        );
+    }
+
+    /// The tokens a budget-folding provider requests for these send parameters.
+    fn requested_total(model: &Model, (max_tokens, level): (u64, ModelThinkingLevel)) -> u64 {
+        adjust_max_tokens_for_thinking(max_tokens, model.max_tokens, level, None)
+            .unwrap()
+            .0
+    }
+
+    #[test]
+    fn the_cap_covers_thinking_on_budget_folding_providers() {
+        let gateway = model("anthropic-messages", "google/gemini-3.8-flash", 65_536);
+        for (level, cap) in [
+            (ModelThinkingLevel::Low, 8_192),
+            (ModelThinkingLevel::High, 8_192),
+            (ModelThinkingLevel::Medium, 2_048),
+            (ModelThinkingLevel::Minimal, 2_048),
+        ] {
+            let send = cap_request_output(&gateway, level, cap);
+            assert_eq!(requested_total(&gateway, send), cap, "{level:?} {cap}");
+        }
+        // Low keeps its own 2_048 budget and gives the rest to the answer.
+        assert_eq!(
+            cap_request_output(&gateway, ModelThinkingLevel::Low, 8_192),
+            (6_144, ModelThinkingLevel::Low)
+        );
+        // A level too big for the cap steps down to one that fits.
+        assert_eq!(
+            cap_request_output(&gateway, ModelThinkingLevel::High, 8_192),
+            (6_144, ModelThinkingLevel::Low)
+        );
+        assert_eq!(
+            cap_request_output(&gateway, ModelThinkingLevel::Medium, 2_048),
+            (1_024, ModelThinkingLevel::Minimal)
+        );
+    }
+
+    #[test]
+    fn the_cap_is_the_request_budget_without_thinking_or_folding() {
+        let gateway = model("anthropic-messages", "google/gemini-3.8-flash", 65_536);
+        assert_eq!(
+            cap_request_output(&gateway, ModelThinkingLevel::Off, 8_192),
+            (8_192, ModelThinkingLevel::Off)
+        );
+        let adaptive = model("anthropic-messages", "claude-opus-4-6", 65_536);
+        assert_eq!(
+            cap_request_output(&adaptive, ModelThinkingLevel::High, 8_192),
+            (8_192, ModelThinkingLevel::High)
+        );
+        let openai = model("openai-completions", "gpt-x", 65_536);
+        assert_eq!(
+            cap_request_output(&openai, ModelThinkingLevel::High, 8_192),
+            (8_192, ModelThinkingLevel::High)
+        );
+    }
+
+    #[test]
+    fn the_cap_never_exceeds_the_model_maximum() {
+        let small = model("openai-completions", "gpt-x", 4_096);
+        assert_eq!(
+            cap_request_output(&small, ModelThinkingLevel::Low, 8_192).0,
+            4_096
         );
     }
 }

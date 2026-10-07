@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use serde_json::{json, Map, Value};
 
 use crate::models::supports_thinking;
+use crate::providers::gateway_routing;
 use crate::providers::openai_completions::convert::{convert_messages, convert_tools};
 use crate::providers::openai_completions::has_tool_history;
 use crate::providers::openai_completions::{
@@ -221,20 +222,13 @@ pub(crate) fn build_params(
 
     if model.base_url.contains("ai-gateway.vercel.sh") {
         if let Some(crate::types::CompatKind::OpenAiCompletions(compat)) = model.compat_kind() {
-            if let Some(routing) = &compat.as_ref().vercel_gateway_routing {
-                let mut gateway_options = Map::new();
-                if let Some(only) = &routing.only {
-                    gateway_options.insert("only".into(), json!(only));
-                }
-                if let Some(order) = &routing.order {
-                    gateway_options.insert("order".into(), json!(order));
-                }
-                if !gateway_options.is_empty() {
-                    params.insert(
-                        "providerOptions".into(),
-                        json!({ "gateway": Value::Object(gateway_options) }),
-                    );
-                }
+            if let Some(options) = compat
+                .as_ref()
+                .vercel_gateway_routing
+                .as_ref()
+                .and_then(gateway_routing::provider_options)
+            {
+                params.insert("providerOptions".into(), options);
             }
         }
     }

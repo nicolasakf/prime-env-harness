@@ -1,6 +1,7 @@
 //! Anthropic Messages request params assembly.
 //! Section of the port of `packages/ai/src/providers/anthropic.ts`.
 
+use pa_types::ai::VercelGatewayRouting;
 use serde_json::{json, Map, Value};
 
 use crate::providers::anthropic::convert::{convert_messages, convert_tools};
@@ -8,6 +9,7 @@ use crate::providers::anthropic::{
     get_anthropic_compat, is_always_on_adaptive_thinking_model, supports_adaptive_thinking,
     AnthropicOptions, AnthropicThinkingDisplay, CacheControl,
 };
+use crate::providers::gateway_routing;
 use crate::types::{Context, Model};
 use crate::utils_inner::sanitize_unicode::sanitize_surrogates;
 
@@ -143,6 +145,24 @@ pub(crate) fn build_params(
 
     if let Some(tool_choice) = options.and_then(|options| options.tool_choice.as_ref()) {
         params.insert("tool_choice".into(), tool_choice.to_json());
+    }
+
+    // Vercel AI Gateway routes `/v1/messages` on a top-level `providerOptions`
+    // field. Routing is read from the raw compat object: the Anthropic compat
+    // struct does not carry it, so a typed view would drop it.
+    if model.base_url.contains("ai-gateway.vercel.sh") {
+        if let Some(options) = model
+            .compat
+            .as_ref()
+            .and_then(|compat| compat.raw.get("vercelGatewayRouting"))
+            .and_then(|routing| {
+                serde_json::from_value::<VercelGatewayRouting>(routing.clone()).ok()
+            })
+            .as_ref()
+            .and_then(gateway_routing::provider_options)
+        {
+            params.insert("providerOptions".into(), options);
+        }
     }
 
     Value::Object(params)

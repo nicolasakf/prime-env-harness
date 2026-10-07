@@ -208,6 +208,18 @@ pub async fn send(request: RequestOptions) -> Result<HttpResponse, ProviderError
     for (name, value) in &request.headers {
         builder = builder.header(name, value);
     }
+    // The OpenAI and Anthropic SDKs attach `Content-Type: application/json`
+    // whenever a body is sent and the caller left the header unset.
+    // `RequestBuilder::body` does not, and an endpoint that requires the
+    // header rejects the POST with 415.
+    if request.body.is_some()
+        && !request
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+    {
+        builder = builder.header("content-type", "application/json");
+    }
     if let Some(body) = &request.body {
         builder = builder.body(body.clone());
     }
@@ -309,4 +321,76 @@ pub async fn post_json(
             .map_err(|error| ProviderError::Message(format!("Invalid JSON response: {error}")))?
     };
     Ok((status, parsed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Accept one request, return its raw header block, and answer 200.
+    async fn capture_request_headers(request: RequestOptions) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let captured = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 1024];
+            loop {
+                let read = socket.read(&mut chunk).await.unwrap();
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&buffer).to_string()
+        });
+
+        let mut request = request;
+        request.url = format!("http://{address}/v1/responses");
+        send(request).await.unwrap();
+        captured.await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_json_body_without_a_content_type_is_sent_as_application_json() {
+        let headers = capture_request_headers(RequestOptions {
+            body: Some(r#"{"model":"m"}"#.to_string()),
+            headers: vec![("Authorization".to_string(), "Bearer test".to_string())],
+            ..RequestOptions::new(reqwest::Method::POST, "http://unused".to_string())
+        })
+        .await;
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("content-type: application/json"),
+            "{headers}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_explicit_content_type_is_left_unchanged() {
+        let headers = capture_request_headers(RequestOptions {
+            body: Some("a=b".to_string()),
+            headers: vec![(
+                "Content-Type".to_string(),
+                "application/x-www-form-urlencoded".to_string(),
+            )],
+            ..RequestOptions::new(reqwest::Method::POST, "http://unused".to_string())
+        })
+        .await;
+        let lower = headers.to_ascii_lowercase();
+        assert!(
+            lower.contains("content-type: application/x-www-form-urlencoded"),
+            "{headers}"
+        );
+        assert!(!lower.contains("application/json"), "{headers}");
+    }
 }
