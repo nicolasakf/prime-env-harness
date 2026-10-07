@@ -28,6 +28,7 @@ struct LinkWriteFailed;
 
 /// One request/response exchange over the supervisor client socket.
 struct LinkClient {
+    client_id: Option<String>,
     reader: BufReader<Box<dyn AsyncReadHalf>>,
     writer: Box<dyn AsyncWriteHalf>,
     next_id: u64,
@@ -43,6 +44,7 @@ impl LinkClient {
         let id = format!("link-{}", self.next_id);
         self.next_id += 1;
         let envelope = json!({
+            "clientId": self.client_id,
             "type": "command",
             "id": id,
             "protocol": current_protocol_info(),
@@ -86,12 +88,23 @@ impl LinkClient {
 /// admission request behind the connection's read lock.
 pub struct SupervisorLink {
     socket_path: PathBuf,
+    client_id: Option<String>,
 }
 
 impl SupervisorLink {
     #[must_use]
     pub fn new(socket_path: PathBuf) -> Self {
-        Self { socket_path }
+        Self {
+            socket_path,
+            client_id: None,
+        }
+    }
+
+    pub(crate) fn owned(socket_path: PathBuf, client_id: String) -> Self {
+        Self {
+            socket_path,
+            client_id: Some(client_id),
+        }
     }
 
     /// The supervisor socket this link dials.
@@ -133,6 +146,7 @@ impl SupervisorLink {
             .with_context(|| format!("connect supervisor {}", self.socket_path.display()))?;
         let (reader, writer) = stream.split();
         let mut client = LinkClient {
+            client_id: self.client_id.clone(),
             reader: BufReader::new(reader),
             writer,
             next_id: 0,

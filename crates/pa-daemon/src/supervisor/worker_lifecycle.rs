@@ -247,6 +247,9 @@ impl Supervisor {
             "skills",
             "promptTemplates",
             "autonomous",
+            "environmentInstance",
+            "environmentHost",
+            "environmentSeat",
         ] {
             if let Some(value) = config_object.and_then(|config| config.get(key)) {
                 durable_rest.insert(key.to_string(), value.clone());

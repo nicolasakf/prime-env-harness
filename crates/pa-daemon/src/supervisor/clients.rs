@@ -104,8 +104,9 @@ impl Supervisor {
         };
         write_line(&mut writer, &serde_json::to_value(&hello)?).await?;
 
-        let mut reader = BufReader::new(reader);
-        let mut line = String::new();
+        // next_line retains partial input when an event wins select!. read_line
+        // can consume bytes before cancellation and lose that command prefix.
+        let mut reader = BufReader::new(reader).lines();
         let mut events = self.events.subscribe();
         let connection_id = client_id.clone();
         // Session events ride this per-connection queue (the subscriber
@@ -152,13 +153,9 @@ impl Supervisor {
             crate::backpressure::CLIENT_DISPATCH_CONCURRENCY,
         ));
         loop {
-            line.clear();
             tokio::select! {
-                read = reader.read_line(&mut line), if dispatch_slots.available_permits() > 0 => {
-                    let Ok(read) = read else { break };
-                    if read == 0 {
-                        break;
-                    }
+                read = reader.next_line(), if dispatch_slots.available_permits() > 0 => {
+                    let Ok(Some(line)) = read else { break };
                     let trimmed = line.trim().to_string();
                     if trimmed.is_empty() {
                         continue;
@@ -1086,6 +1083,10 @@ impl Supervisor {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "client_read_tests.rs"]
+mod client_read_tests;
 
 #[cfg(all(test, unix))]
 mod tests {

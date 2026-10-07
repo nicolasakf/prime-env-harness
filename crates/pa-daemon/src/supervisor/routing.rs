@@ -73,10 +73,24 @@ impl Supervisor {
         resident: &Arc<ResidentWorker>,
         cmd_tx: mpsc::Sender<WorkerRequest>,
         command_type: &str,
-        payload: Value,
+        mut payload: Value,
         timeout_ms: u64,
         admission: RouteAdmission,
     ) -> Result<WorkerReply> {
+        // Seat summaries used for supervised reuse/adoption require the same
+        // durable capability as seat calls; ordinary clients cannot read them.
+        if command_type == "get_state" && matches!(admission, RouteAdmission::SupervisorInternal) {
+            let descriptor = resident.descriptor.lock().await;
+            if let Some(token) = descriptor
+                .create_command
+                .rest
+                .get("environmentSeat")
+                .and_then(|seat| seat.get("token"))
+                .and_then(Value::as_str)
+            {
+                payload["environmentSeatCapability"] = json!(token);
+            }
+        }
         // Bounded admission (the Codex request/await split): a client's
         // request-shaped command answers the explicit overload refusal
         // the moment the worker's in-flight bound is full — nothing is
@@ -644,7 +658,11 @@ impl Supervisor {
                 );
             }
         }
-        let timeout = if matches!(
+        let timeout = if matches!(command, DaemonCommand::Env { .. }) {
+            // Dependency preparation has a ten-minute default budget;
+            // validation also starts workers and restores a checkpoint.
+            780_000
+        } else if matches!(
             command,
             DaemonCommand::PromptAndWait { .. }
                 | DaemonCommand::WaitForIdle { .. }

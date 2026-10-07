@@ -742,6 +742,11 @@ impl Supervisor {
                             .fetch_add(1, Ordering::Relaxed);
                         let _ =
                             events.send((ClientRouting::Broadcast, std::sync::Arc::new(payload)));
+                    } else if outbound_type == "environment_runs_changed" {
+                        // An environment run opened or changed phase: every
+                        // client's Environments dock group re-reads its runs.
+                        let _ =
+                            events.send((ClientRouting::Broadcast, std::sync::Arc::new(payload)));
                     } else if outbound_type == "model_catalog_changed" {
                         // A worker's background catalog refresh changed
                         // the served snapshot: every client re-fetches
