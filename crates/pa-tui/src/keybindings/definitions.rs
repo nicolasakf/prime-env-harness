@@ -307,7 +307,22 @@ pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     ("app.model.select", def!(&["ctrl+l"], "Open model selector")),
     (
         "app.model.toggleScope",
-        def!(&["alt+s"], "Toggle model selector scope"),
+        def!(&["tab"], "Toggle model selector scope"),
+    ),
+    (
+        "app.model.toggleModelScope",
+        def!(
+            &["alt+p"],
+            "Add or remove the selected model from the scope"
+        ),
+    ),
+    (
+        "app.model.moveScopedUp",
+        def!(&["alt+up"], "Move the selected scoped model earlier"),
+    ),
+    (
+        "app.model.moveScopedDown",
+        def!(&["alt+down"], "Move the selected scoped model later"),
     ),
     (
         "app.model.cycleForward",

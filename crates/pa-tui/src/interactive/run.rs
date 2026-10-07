@@ -154,6 +154,7 @@ async fn run_interactive_surface(
     // Background notes (a failed abort request) fold into the transcript
     // through the same loop that renders daemon events.
     let (notes_tx, mut notes_rx) = mpsc::unbounded_channel::<String>();
+    let (environment_tx, mut environment_rx) = mpsc::unbounded_channel();
     // The backgrounded compaction abort reports here; the loop folds a
     // failed abort into the transcript note and clears the stuck loader.
     let (compaction_abort_tx, mut compaction_abort_rx) =
@@ -193,6 +194,10 @@ async fn run_interactive_surface(
     let (auth_panel_tx, mut auth_panel_rx) =
         mpsc::unbounded_channel::<crate::auth_panel::AuthPanelRequest>();
     let (bash_tx, mut bash_rx) = mpsc::unbounded_channel::<crate::session_ui::BashActivityUpdate>();
+    // Background environment-run refreshes (`controls` for the dock's
+    // Environments group) report here.
+    let (environment_runs_tx, mut environment_runs_rx) =
+        mpsc::unbounded_channel::<crate::session_ui::EnvironmentRunsUpdate>();
     // Background slash-command-catalog refreshes (`get_commands`) report
     // here; the loop folds the session's skill commands into the
     // autocomplete provider.
@@ -301,6 +306,7 @@ async fn run_interactive_surface(
             let first = first_connection.take();
             let options = options.clone();
             let notes_tx = notes_tx.clone();
+            let environment_tx = environment_tx.clone();
             let compaction_abort_tx = compaction_abort_tx.clone();
             let prompt_tx = prompt_tx.clone();
             let share_tx = share_tx.clone();
@@ -311,6 +317,7 @@ async fn run_interactive_surface(
             let auth_panel_tx = auth_panel_tx.clone();
             let heartbeats_tx = heartbeats_tx.clone();
             let bash_tx = bash_tx.clone();
+            let environment_runs_tx = environment_runs_tx.clone();
             let commands_tx = commands_tx.clone();
             async move {
                 let (client, events) = match first {
@@ -323,6 +330,7 @@ async fn run_interactive_surface(
                     client,
                     &options,
                     notes_tx,
+                    environment_tx,
                     compaction_abort_tx,
                     prompt_tx,
                     share_tx,
@@ -334,6 +342,7 @@ async fn run_interactive_surface(
                     crate::session_ui::ActivityUpdates {
                         heartbeats: heartbeats_tx,
                         bash: bash_tx,
+                        environment_runs: environment_runs_tx,
                         commands: commands_tx,
                     },
                 )
@@ -458,6 +467,19 @@ async fn run_interactive_surface(
     // composition-root snapshot keeps serving the picker.
     session.spawn_model_catalog_refresh();
     session.rebuild_view(&mut view, &crate::session_ui::RebuildKind::Rebind);
+    // The tutorial hint is for a fresh chat only: a resumed session already
+    // has a transcript, so the hint would be noise there.
+    if view.chat_len() == 0
+        && session
+            .client
+            .supports_server_capability(pa_types::environments::ENVIRONMENT_CAPABILITY)
+    {
+        session.plain_row(
+            "New here? Type /tutorial and press Enter to get started.",
+            &mut view,
+        );
+    }
+
     // The cross-view layout handoff's adopt (view::handoff): a re-entry
     // whose attach cursor exactly matches the previous run's held
     // handoff — the same worker, the same event sequence, the same entry
@@ -1149,6 +1171,18 @@ async fn run_interactive_surface(
         if session.dirty && render_deadline.is_none() {
             render_deadline = Some(Instant::now());
         }
+        // A paint consumes the frame deadline, including the spinner's
+        // previous wake. Re-arm the next phase BEFORE waiting: doing this
+        // after select lets a quiet turn park until another daemon event,
+        // freezing both the spinner and its elapsed-time label.
+        if let Some(started) = anim_started {
+            let phase = (started.elapsed().as_millis() / SPINNER_INTERVAL_MS) as u64;
+            let next_phase =
+                started + Duration::from_millis(SPINNER_INTERVAL_MS as u64 * (phase + 1));
+            if render_deadline.is_none_or(|deadline| deadline > next_phase) {
+                render_deadline = Some(next_phase);
+            }
+        }
         for deadline in [wait_idle_deadline, wait_render_deadline]
             .into_iter()
             .flatten()
@@ -1437,6 +1471,9 @@ async fn run_interactive_surface(
                     pending.push_back(input);
                 }
             }
+            maybe_environment = environment_rx.recv() => {
+                if let Some(failure) = maybe_environment { session.apply_environment_request_failure(&failure, &mut view); }
+            }
             maybe_note = notes_rx.recv() => {
                 if let Some(note) = maybe_note {
                     session.apply_background_note(&note, &mut view);
@@ -1480,6 +1517,11 @@ async fn run_interactive_surface(
             maybe_heartbeats = heartbeats_rx.recv() => {
                 if let Some(update) = maybe_heartbeats {
                     session.apply_heartbeat_update(update, &mut view);
+                }
+            }
+            maybe_environment_runs = environment_runs_rx.recv() => {
+                if let Some(update) = maybe_environment_runs {
+                    session.apply_environment_runs_update(update, &mut view);
                 }
             }
             maybe_bash = bash_rx.recv() => {
@@ -1882,14 +1924,6 @@ async fn run_interactive_surface(
             view.pulse_frame = phase;
             if phase != last_pulse_phase {
                 session.dirty = true;
-            }
-            // Arm the next phase boundary: without a deadline the select
-            // would only wake on the 50ms tick, adding up to a full tick
-            // of spinner latency to every phase change.
-            let next_phase =
-                started + Duration::from_millis(SPINNER_INTERVAL_MS as u64 * (phase as u64 + 1));
-            if render_deadline.is_none_or(|deadline| deadline > next_phase) {
-                render_deadline = Some(next_phase);
             }
         } else {
             anim_started = None;

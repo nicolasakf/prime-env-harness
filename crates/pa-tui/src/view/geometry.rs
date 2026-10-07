@@ -63,7 +63,19 @@ impl AgentView {
                 )
             }
             ChatEntry::CustomPanel(row) => {
-                crate::custom_message::geometry::custom_panel_row_count(row, &self.theme, width)
+                if crate::custom_message::environment::is_observation(row)
+                    && !detail.tool_output_expanded()
+                {
+                    let mut collapsed = (**row).clone();
+                    collapsed.content = "Observation updated · expand to inspect".into();
+                    crate::custom_message::geometry::custom_panel_row_count(
+                        &collapsed,
+                        &self.theme,
+                        width,
+                    )
+                } else {
+                    crate::custom_message::geometry::custom_panel_row_count(row, &self.theme, width)
+                }
             }
             ChatEntry::Tool(card) => {
                 usize::from(spacing)

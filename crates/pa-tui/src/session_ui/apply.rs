@@ -38,24 +38,26 @@ impl SessionUi {
         let client = self.client.clone();
         let active_session_id = self.active_session_id.clone();
         let notes = self.notes.clone();
+        let participant = self.environment_profile.is_some();
         tokio::spawn(async move {
-            let mut result = if client.supports_server_capability("abort_and_send_queued") {
-                client
-                    .request_ok(DaemonCommand::AbortAndSendQueued {
-                        id: None,
-                        active_session_id: active_session_id.clone(),
-                        rest: Map::default(),
-                    })
-                    .await
-            } else {
-                client
-                    .request_ok(DaemonCommand::Abort {
-                        id: None,
-                        active_session_id: active_session_id.clone(),
-                        rest: Map::default(),
-                    })
-                    .await
-            };
+            let mut result =
+                if client.supports_server_capability("abort_and_send_queued") && !participant {
+                    client
+                        .request_ok(DaemonCommand::AbortAndSendQueued {
+                            id: None,
+                            active_session_id: active_session_id.clone(),
+                            rest: Map::default(),
+                        })
+                        .await
+                } else {
+                    client
+                        .request_ok(DaemonCommand::Abort {
+                            id: None,
+                            active_session_id: active_session_id.clone(),
+                            rest: Map::default(),
+                        })
+                        .await
+                };
             // A daemon that rejects the command itself gets the plain
             // abort too (TS `isUnknownDaemonCommandError`'s arm).
             if matches!(&result, Err(error) if error.to_string().contains("abort_and_send_queued"))
@@ -293,6 +295,12 @@ impl SessionUi {
                 if meta_sequence > self.last_event_sequence {
                     self.last_event_sequence = meta_sequence;
                 }
+                if event["type"] == "message_end"
+                    && event["message"]["customType"] == "environment_private"
+                {
+                    self.track_feature_outcome("environment_private_response", "completed", None);
+                }
+                self.apply_environment_event(&event, view);
                 if let Some(update) = event_to_update(&event) {
                     self.apply_update(update, view);
                 }
@@ -387,6 +395,11 @@ impl SessionUi {
             // (another client's pause/resume reaches the dock at once).
             DaemonClientEvent::HeartbeatsChanged => {
                 self.spawn_heartbeat_refresh();
+            }
+            // An environment run opened or changed phase anywhere in the
+            // daemon: the Environments dock group re-reads its runs.
+            DaemonClientEvent::EnvironmentRunsChanged => {
+                self.spawn_environment_runs_refresh();
             }
             // A background daemon-side catalog refresh changed the served
             // snapshot (the Rust-only no-stall picker-open extension):

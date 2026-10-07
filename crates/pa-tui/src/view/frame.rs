@@ -61,7 +61,20 @@ impl AgentView {
         // value): read before the panel borrow below.
         let info_viewport_rows = crate::session_ui::picker_viewport_rows(self.terminal_rows());
         let pane_row = prompt_context.len();
-        let picker_dock: Option<Vec<Line>> = if let Some(picker) = self.model_picker.as_mut() {
+        let picker_dock: Option<Vec<Line>> = if let Some(panel) = self.environment_panel.as_mut() {
+            let mut dock = prompt_context;
+            let rendered = panel.render(&self.theme, width, height.saturating_sub(6));
+            for (row, cols, control) in rendered.regions {
+                self.click.record_dock_region(click::DockClickRegion {
+                    dock_row: dock.len() + row,
+                    cols,
+                    action: click::ClickAction::EnvironmentControl(control),
+                });
+            }
+            dock.extend(rendered.rows);
+            self.dock_cursor = None;
+            Some(dock)
+        } else if let Some(picker) = self.model_picker.as_mut() {
             let mut dock = prompt_context;
             dock.extend(picker.render(&self.theme, width, self.editor.keybindings()));
             // The pane's item rows are clickable (view/click.rs): the
@@ -103,6 +116,10 @@ impl AgentView {
         } else if let Some(view) = self.bash_view.as_ref() {
             let mut dock = prompt_context;
             dock.extend(view.render(&self.theme, width, self.editor.keybindings()));
+            Some(dock)
+        } else if let Some(runs_view) = self.environment_runs_view.as_ref() {
+            let mut dock = prompt_context;
+            dock.extend(runs_view.render(&self.theme, width, self.editor.keybindings()));
             Some(dock)
         } else if let Some(panel) = self.info_panel.as_mut() {
             let mut dock = prompt_context;
@@ -327,6 +344,7 @@ impl AgentView {
             || self.heartbeats_picker.is_some()
             || self.goal_panel.is_some()
             || self.bash_view.is_some()
+            || self.environment_runs_view.is_some()
             || self.info_panel.is_some()
             || self.tree_selector.is_some()
             || self.fork_selector.is_some()

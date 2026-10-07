@@ -21,6 +21,7 @@
 //! drops unknown types instead; the live interactive path is the TUI ground
 //! truth, and the Rust engine persists those types with `display: false`.)
 
+pub(crate) mod environment;
 pub(crate) mod geometry;
 pub(crate) use geometry::agent_message_body_count;
 pub(crate) mod injected_prompt;
@@ -208,6 +209,11 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
                 },
             }]
         }
+        "environment_notice"
+        | "environment_observation"
+        | "environment_direct_message"
+        | "environment_action"
+        | "environment_status" => environment::entries(custom_type, message),
         REFINEMENT_OUTCOME_CUSTOM_TYPE => refinement::refinement_outcome_entries(message, details),
         AGENT_MESSAGE_CUSTOM_TYPE => agent_message_entry(details).map_or_else(
             || vec![generic_panel_entry(custom_type, message)],

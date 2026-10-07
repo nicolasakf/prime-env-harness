@@ -48,6 +48,26 @@ fn slash_context_matches_ts_positions() {
 }
 
 #[test]
+fn id_command_completes_without_an_argument() {
+    let provider = provider("/tmp");
+    let suggestions = ready(provider.get_suggestions(&["/id".to_string()], 0, 3, false));
+    assert_eq!(suggestions.items[0].value, "id");
+    assert_eq!(
+        suggestions.items[0].description.as_deref(),
+        Some("Copy the current session id to clipboard")
+    );
+    let applied = provider.apply_completion(&["/i".into()], 0, 2, &suggestions.items[0], "/i");
+    assert_eq!(
+        applied,
+        CompletionResult {
+            lines: vec!["/id".into()],
+            cursor_line: 0,
+            cursor_col: 3,
+        }
+    );
+}
+
+#[test]
 fn slash_suggestions_filter_fuzzily() {
     let provider = provider("/tmp");
     let suggestions = ready(provider.get_suggestions(&["/se".to_string()], 0, 3, false));

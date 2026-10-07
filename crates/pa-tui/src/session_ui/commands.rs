@@ -32,6 +32,40 @@ impl SessionUi {
         let (name, args) = pa_types::slash_commands::parse_slash_command(text)
             .unwrap_or_else(|| (String::new(), String::new()));
 
+        if name == "tutorial"
+            && self
+                .client
+                .supports_server_capability(pa_types::environments::ENVIRONMENT_CAPABILITY)
+        {
+            self.plain_row(include_str!("tutorial.txt"), view);
+            self.track_feature_outcome("environment_tutorial", "completed", None);
+            return Ok(());
+        }
+
+        if name == "env" {
+            if let Err(error) = self.handle_environment(&args, view).await {
+                self.error_row(&error.to_string(), view);
+            }
+            return Ok(());
+        }
+        if self
+            .client
+            .supports_server_capability(pa_types::environments::ENVIRONMENT_CAPABILITY)
+        {
+            let Some(state) = self.connection_state(view).await else {
+                return Ok(());
+            };
+            if state["environmentParticipant"] == true
+                && !matches!(
+                    name.as_str(),
+                    "help" | "exit" | "quit" | "copy" | "session" | "id"
+                )
+            {
+                self.error_row("Environment tables use /env act, /env observe, /env seats, /env msg, /env pause, /env resume, /env stop, and /env leave.", view);
+                return Ok(());
+            }
+        }
+
         // A bare `/skill:<name>` submit never sends. The daemon's
         // admission seam replaces a sent skill command with its expanded
         // protocol block, so a bare invocation would hand the model the
@@ -57,7 +91,7 @@ impl SessionUi {
         match name.as_str() {
             "help" => {
                 self.note(
-                    "/help           this list\n/list           live sessions\n/switch <n|id>  switch to a session from /list\n/new            start a new session\n/exit           detach and exit",
+                    "/help           this list\n/list           live sessions\n/switch <n|id>  switch to a session from /list\n/new            start a new session\n/id             copy the current session id\n/exit           detach and exit",
                     view,
                 );
                 return Ok(());
@@ -300,6 +334,32 @@ impl SessionUi {
                     view.editor
                         .set_text(&format!("/{} {}", resolved.original_name, resolved.args));
                     self.error_row("Usage: /copy", view);
+                }
+            }
+            // `/id`: the durable session id (`/session`'s ID, the `--resume`
+            // selector). A live attach with no durable id yet falls back to
+            // the active session id. An argument is a usage error and the
+            // typed text stays in the editor, same as `/copy`.
+            "id" => {
+                if !resolved.args.is_empty() {
+                    view.editor
+                        .set_text(&format!("/{} {}", resolved.original_name, resolved.args));
+                    self.error_row("Usage: /id", view);
+                    return Ok(());
+                }
+                self.track_command_used("id");
+                let id = if self.session_id.is_empty() {
+                    self.active_session_id.clone()
+                } else {
+                    self.session_id.clone()
+                };
+                if id.is_empty() {
+                    self.error_row("No session id to copy yet.", view);
+                    return Ok(());
+                }
+                match crate::clipboard::copy_to_clipboard(&id, &mut self.osc_sink) {
+                    Ok(()) => self.toast(&format!("Copied {id} to clipboard"), view),
+                    Err(message) => self.error_row(&message, view),
                 }
             }
             // `/login` (TS `showConfigurationMenu("providers")`): the

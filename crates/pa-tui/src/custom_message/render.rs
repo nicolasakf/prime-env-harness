@@ -24,6 +24,11 @@ pub(crate) fn spacer() -> Line {
 /// `customMessageLabel` — the shared header label of the skill card and
 /// the generic custom panel.
 pub(crate) fn custom_message_label(name: &str, theme: &Theme) -> Span {
+    let name = if name == "environment_private" {
+        "Environment"
+    } else {
+        name
+    };
     Span::styled(
         format!("[{name}]"),
         theme

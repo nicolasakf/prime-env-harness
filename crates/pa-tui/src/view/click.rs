@@ -20,6 +20,8 @@ use crate::chat::ChatEntry;
 /// vocabulary).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClickAction {
+    OpenEnvironmentActions,
+    EnvironmentControl(crate::environment_panel::Control),
     /// Toggle the card at this chat-entry index (a tool card, a bash
     /// execution card, an agent-message row, or a shell-completion row).
     ToggleCardExpansion(usize),
@@ -349,7 +351,7 @@ impl AgentView {
                 | ChatEntry::BashExecution(_)
                 | ChatEntry::AgentMessage(_)
                 | ChatEntry::ShellCompletion(_)
-        ))
+        ) || matches!(entry, ChatEntry::CustomPanel(row) if crate::custom_message::environment::is_observation(row)))
         .then_some(ClickAction::ToggleCardExpansion(section.entry))
     }
 }

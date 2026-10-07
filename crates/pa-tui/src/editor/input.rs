@@ -217,6 +217,16 @@ impl Editor {
                     self.cancel_autocomplete();
                     if !is_typed_exact || !completed_noop {
                         self.emit(EditorEvent::Changed(self.get_text()));
+                        // Environment completion drills into the next menu without
+                        // submitting the command or executing an example.
+                        if self.current_slash_command_context().is_some_and(|context| {
+                            context.command_name.as_deref() == Some("env")
+                                && context.prefix.ends_with(char::is_whitespace)
+                        }) {
+                            self.request_autocomplete(
+                                /*force*/ false, /*explicit_tab*/ false,
+                            );
+                        }
                         return;
                     }
                     // Exact slash command typed: fall through so Enter submits.

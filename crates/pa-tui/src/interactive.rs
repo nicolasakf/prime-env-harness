@@ -276,9 +276,12 @@ pub trait InteractionTelemetry: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
     /// A scoped-models interaction (`tui scoped models used`): `action` is
     /// `cycle_forward` / `cycle_backward` (the cycle keys) or
-    /// `toggle_scope` (the picker's scope key); `scoped` reports whether
-    /// the cycle ran within the session's scoped list (the response's
-    /// `isScoped`) / the toggle landed on the scoped side.
+    /// `toggle_scope` (the picker's scope key), `toggle_model_scope` (the
+    /// picker's per-model membership key) or `reorder_scope` (its reorder
+    /// keys, always `scoped: true`); `scoped` reports whether the
+    /// cycle ran within the session's scoped list (the response's
+    /// `isScoped`) / the toggle landed on the scoped side / the model is
+    /// now in scope.
     fn scoped_models_used(
         &self,
         action: &'static str,

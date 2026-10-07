@@ -514,20 +514,22 @@ impl KeybindingsManager {
 
     /// Whether `data` is the macOS option-composed form of one of the id's
     /// bound keys (TS `matches(keyData, id, { optionComposed: true })`:
-    /// Option+S types `ß` on layouts without option-as-meta, and the
-    /// composed character must toggle like Alt+S; only an alt-only
-    /// binding composes).
+    /// Option+P types `\u{3c0}` and Option+S types `\u{df}` on layouts
+    /// without option-as-meta, and the composed character must act like the
+    /// Alt chord; only an alt-only binding on those letters composes).
     #[must_use]
     pub fn matches_option_composed(&self, data: &str, keybinding: &str) -> bool {
         self.resolved.get(keybinding).is_some_and(|keys| {
             keys.iter().any(|key| {
                 let composed = parse_key_id(key).and_then(|parsed| {
-                    (parsed.alt
-                        && !parsed.ctrl
-                        && !parsed.shift
-                        && !parsed.super_key
-                        && parsed.key == "s")
-                        .then_some("\u{df}")
+                    if !parsed.alt || parsed.ctrl || parsed.shift || parsed.super_key {
+                        return None;
+                    }
+                    match parsed.key.as_str() {
+                        "p" => Some("\u{3c0}"),
+                        "s" => Some("\u{df}"),
+                        _ => None,
+                    }
                 });
                 composed.is_some_and(|composed| composed == data)
             })

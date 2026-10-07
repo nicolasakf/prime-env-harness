@@ -187,6 +187,12 @@ pub fn reconcile_unified_sessions(roster: &[Value], saved: &[Value]) -> Vec<Unif
         if get_str(&summary, "lifecycle") != Some("live") {
             continue;
         }
+        // Environment host and seat sessions belong to their run: the
+        // builder's Environments dock group is where a run is reached, so
+        // no row is listed per seat.
+        if get_str(&summary, "environmentRole").is_some() {
+            continue;
+        }
         let status = entry
             .get("status")
             .and_then(Value::as_str)
@@ -748,6 +754,47 @@ mod tests {
         assert_eq!(
             get_str(records[0].daemon.as_ref().unwrap(), "sessionId"),
             Some("child")
+        );
+    }
+
+    /// Environment host and seat sessions never get an agents-view row: a
+    /// run is one dock item on its builder, not one row per seat.
+    #[test]
+    fn reconcile_hides_environment_run_sessions() {
+        let environment = |id: &str, role: &str| {
+            roster_entry(
+                id,
+                "idle",
+                &json!({
+                    "sessionId": id,
+                    "lifecycle": "live",
+                    "activeSessionId": id,
+                    "environmentRole": role,
+                    "messageCount": 3,
+                }),
+            )
+        };
+        let roster = vec![
+            environment("host", "host"),
+            environment("seat", "seat"),
+            roster_entry(
+                "builder",
+                "idle",
+                &json!({
+                    "sessionId": "builder",
+                    "lifecycle": "live",
+                    "activeSessionId": "builder",
+                    "messageCount": 3,
+                }),
+            ),
+        ];
+        let records = reconcile_unified_sessions(&roster, &[]);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| get_str(record.daemon.as_ref().unwrap(), "sessionId"))
+                .collect::<Vec<_>>(),
+            vec![Some("builder")]
         );
     }
 

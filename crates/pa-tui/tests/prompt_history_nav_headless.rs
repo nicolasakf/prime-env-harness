@@ -2,13 +2,9 @@
 //! `packages/tui/src/components/editor.ts`'s `navigateHistory` behind
 //! `tui.editor.cursorUp`/`cursorDown`): Up walks the recalled prompts
 //! backward, Down walks them forward, and one Down past the newest returns
-//! to the draft. The compact dock coexists with the recall: the Down at
-//! the prompt's end keeps TS `SubagentSummaryLine.isSelectable()` — it
-//! grabs focus only when subagents exist — while the dock's other groups
-//! keep their own shortcut (`app.subagents.focus`). The regression this
-//! pins: a dock group outside the subagents box (here, one heartbeat)
-//! must never silently steal that Down, because the dock's focused-Up arm
-//! then consumed the very next Up and the recall read broken.
+//! to the draft. Down at the end of that draft highlights the activity
+//! dock even when the session has no subagents — the dock renders in every
+//! session. While a recalled prompt is showing, Down stays history.
 #![cfg(unix)]
 // Pedantic-gate exceptions (every other pedantic warning in this crate is
 // fixed in place; each exception carries its one-line justification):
@@ -58,9 +54,8 @@ impl MockSupervisor {
 
     /// Serve one connection: attach an empty session, list one heartbeat
     /// (the dock's heartbeats group is selectable while no subagents
-    /// exist — the session shape that must not steal the prompt's Down),
-    /// and answer every prompt with the ack plus the turn's bookend
-    /// events, so the transcript never echoes the prompts and the
+    /// exist), and answer every prompt with the ack plus the turn's
+    /// bookend events, so the transcript never echoes the prompts and the
     /// recalled text renders only in the prompt box.
     fn serve(self) {
         let (stream, _) = self.listener.accept().expect("accept");
@@ -393,36 +388,39 @@ fn up_walks_backward_down_forward_and_the_draft_returns() {
     );
 }
 
-/// The regression (operator report 2026-09-26): with a selectable dock
-/// group outside the subagents box (one heartbeat, no subagents), the
-/// Down at the draft's end must not hand the dock focus — TS
-/// `SubagentSummaryLine.isSelectable()` grants that Down only when
-/// subagents exist. Before the fix this Down grabbed the dock, and the
-/// dock's focused-Up arm consumed the very next Up, so the recall read
-/// broken.
+/// Down at the end of an empty prompt highlights the dock even when the
+/// only selectable group outside subagents is a heartbeat. Right then
+/// Enter opens that heartbeat, which is the highlight's proof: without
+/// the grab those keys stay in the editor and the panel never mounts.
+/// The Up that leaves the dock returns to the empty draft, so recall
+/// takes a second Up.
 #[test]
-fn a_heartbeats_only_dock_never_takes_the_prompts_down() {
+fn down_from_the_prompt_highlights_the_dock() {
     let mut steps = Vec::new();
-    // The dock's heartbeats group is mounted and selectable before the
-    // walk starts: the frame carries its `◷ 1 heartbeat` row.
     steps.push(wait_render("heartbeat"));
     steps.extend(submit("first prompt"));
     steps.push(HeadlessStep::Key(up()));
     steps.push(wait_render("first prompt"));
-    // The overshoot: Down back to the draft, then the draft's own Down —
-    // the press that used to steal the focus.
+    // Down leaves the recalled prompt. The next Down is the empty
+    // draft's own press, and it highlights the dock.
     steps.push(HeadlessStep::Key(down()));
     steps.push(wait_gone("first prompt"));
     steps.push(HeadlessStep::Key(down()));
-    // The very next Up must recall, not unfocus a silently grabbed dock.
+    steps.push(HeadlessStep::Key(right()));
+    steps.push(HeadlessStep::Key(enter()));
+    steps.push(wait_render("dock recall beat"));
+    // The panel's exit restores the dock, and Up returns to the editor.
+    steps.push(HeadlessStep::Key(escape()));
     steps.push(HeadlessStep::Key(up()));
-    steps.push(wait_render("first prompt"));
+    steps.push(HeadlessStep::Type("zq".to_string()));
+    steps.push(wait_render("zq"));
     let frames = run_plan(steps);
     assert_no_barrier_timeouts(&frames);
-    let last = frames.last().expect("the plan rendered frames");
     assert!(
-        last.contains("first prompt"),
-        "the Up after the draft's Down recalled the prompt: {last:?}"
+        frames
+            .iter()
+            .any(|frame| frame.contains("zq") && !frame.contains("first prompt")),
+        "the Up after Down returned to the empty draft instead of recalling: {frames:?}"
     );
 }
 

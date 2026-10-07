@@ -7,6 +7,7 @@ mod apply;
 mod auth;
 mod bash;
 mod commands;
+pub(crate) mod environments;
 mod heartbeats;
 mod keys;
 mod lifecycle;
@@ -24,6 +25,7 @@ pub(crate) use apply::CompactionAbortNote;
 use auth::{McpAuthIntent, PendingModelSignIn, SetModelOutcome};
 pub(crate) use bash::BashActivityUpdate;
 use bash::{ResyncBash, SideBashRun};
+pub(crate) use environments::EnvironmentRunsUpdate;
 use heartbeats::paused_heartbeat_count;
 pub(crate) use heartbeats::HeartbeatsUpdate;
 use keys::SelectionAutoScroll;
@@ -122,6 +124,20 @@ pub(crate) struct CommandCatalogUpdate {
 }
 
 pub(crate) struct SessionUi {
+    environment_profile: Option<pa_types::environments::EnvironmentSessionProfile>,
+    environment_status: Value,
+    environment_instances: Vec<pa_types::environments::Instance>,
+    environment_runs: Vec<pa_types::environments::InstanceRun>,
+    /// Where background run-list refreshes deliver their fetches (the run
+    /// loop folds them into the Environments dock group).
+    environment_run_updates: mpsc::UnboundedSender<environments::EnvironmentRunsUpdate>,
+    /// One refresh in flight at a time, with one queued trailing refresh.
+    environment_refresh_in_flight: bool,
+    environment_refresh_queued: bool,
+    environment_definitions: Vec<pa_types::environments::Definition>,
+    environment_actions: Vec<pa_types::environments::ActionDescriptor>,
+    environment_pending: Option<String>,
+    environment_failures: mpsc::UnboundedSender<environments::EnvironmentRequestFailure>,
     pub(crate) client: DaemonClient,
     pub(crate) active_session_id: String,
     pub(crate) session_id: String,
@@ -301,7 +317,8 @@ pub(crate) struct SessionUi {
     /// Rows of the most recent `/list` (for `/switch <n>`).
     list_rows: Vec<Value>,
     pub(crate) turn_active: bool,
-    /// Completed turns observed on this connection. A prompt ACK may arrive
+    /// Completed turns and environment inputs that need no model turn.
+    /// A prompt ACK may arrive
     /// after its entire streamed turn; it must not restart the loader then.
     turn_ends_seen: u64,
     /// The last submitted prompt's expected completion in wire order.
@@ -677,6 +694,27 @@ impl SessionUi {
         let was_showing = view.editor.is_showing_autocomplete();
         let was_pending = view.editor.has_pending_autocomplete();
         view.editor.materialize_autocomplete();
+        if let Some((_, partial)) = view
+            .editor
+            .picker_argument_context()
+            .filter(|(command, _)| {
+                !was_showing && view.editor.is_showing_autocomplete() && command == "env"
+            })
+        {
+            self.track_feature_outcome(
+                if partial.trim() == "act" {
+                    "environment_action_picker"
+                } else if partial.trim_start().starts_with("resume ")
+                    || partial.trim_start().starts_with("enter ")
+                {
+                    "environment_instance_picker"
+                } else {
+                    "environment_command_help"
+                },
+                "initiated",
+                None,
+            );
+        }
         for event in view.editor.take_events() {
             if let crate::editor::EditorEvent::Changed(text) = event {
                 // TS onChange: the exit hint clears as soon as the editor
@@ -699,6 +737,52 @@ impl SessionUi {
     }
 
     fn session_display(&self) -> String {
+        if let Some(profile) = &self.environment_profile {
+            let roster = self.environment_status["roster"]["seats"].as_array();
+            let seat = self.environment_status["human_seat"]
+                .as_str()
+                .unwrap_or("spectator");
+            let role = roster
+                .and_then(|seats| seats.iter().find(|entry| entry["id"] == seat))
+                .and_then(|entry| entry["role"].as_str())
+                .unwrap_or("spectator");
+            let agents = roster.map_or(1, |seats| {
+                seats
+                    .iter()
+                    .filter(|entry| entry["occupant"] == "agent")
+                    .count()
+            });
+            let run = &self.environment_status["run"];
+            let activity = roster
+                .map(|seats| {
+                    seats
+                        .iter()
+                        .filter(|entry| entry["occupant"] == "agent")
+                        .map(|entry| {
+                            let id = entry["id"].as_str().unwrap_or("seat");
+                            let phase = if run["busy"].get(id).is_some() {
+                                "thinking"
+                            } else {
+                                "idle"
+                            };
+                            format!("{id}:{phase}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            return format!(
+                "{} | {seat} ({role}) | {agents} agents · {activity} | {} | {:?} | Python {}",
+                self.session_name.as_deref().unwrap_or("Environment"),
+                run["phase"].as_str().unwrap_or("ready"),
+                profile.policy.backend,
+                if profile.python_execution {
+                    "on"
+                } else {
+                    "off"
+                }
+            );
+        }
         self.session_name
             .clone()
             .unwrap_or_else(|| crate::chrome::display_name(&self.cwd.to_string_lossy()))

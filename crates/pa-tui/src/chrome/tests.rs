@@ -331,6 +331,7 @@ fn activity_dock_selection_is_the_hover_colored_band() {
         heartbeats: 3,
         heartbeats_paused: 1,
         bash_running: 1,
+        environment_runs: None,
         goal_label: Some("Pursuing goal (0s)".to_string()),
         selected: ActivityGroup::Heartbeats,
         focused: true,
@@ -374,6 +375,16 @@ fn activity_dock_selection_is_the_hover_colored_band() {
             span.content
         );
     }
+    // The underline is the dock's extra focus cue: it rides exactly
+    // the selected group, like the band.
+    for span in row {
+        assert_eq!(
+            span.style.add_modifier.contains(Modifier::UNDERLINED),
+            selected.contains(&span.content.as_str()),
+            "the underline rides exactly the selected group: {:?}",
+            span.content
+        );
+    }
     // The accent never rides the row as the band (the selection is
     // the hover's own light color).
     let accent = theme.fg_style(ThemeColor::Accent).fg;
@@ -385,7 +396,9 @@ fn activity_dock_selection_is_the_hover_colored_band() {
         ..dock
     };
     let frame = render_activity_dock(&unfocused, &theme, 120);
-    assert!(frame[1].iter().all(|span| span.style.bg.is_none()));
+    assert!(frame[1].iter().all(|span| {
+        span.style.bg.is_none() && !span.style.add_modifier.contains(Modifier::UNDERLINED)
+    }));
 }
 
 /// The arrows never skip an empty group (the operator's 2026-09-26
@@ -581,6 +594,7 @@ fn speed_footer_is_one_dim_row_truncated_to_width() {
 
 use super::*;
 use crate::theme::{ColorMode, Theme};
+use ratatui::style::Modifier;
 use serde_json::json;
 
 fn theme() -> Theme {
@@ -798,5 +812,40 @@ fn detail_status_label() {
     assert_eq!(
         conversation_detail_status(true, true, "Ctrl+O"),
         "Expanded mode (Ctrl+O to collapse)"
+    );
+}
+
+/// The Environments group mounts only while the session is an environment
+/// builder, sits between the shells and the goal row, and reads one item per
+/// run with its paused and stalled clusters.
+#[test]
+fn dock_environments_group_mounts_for_builders_and_reads_per_run() {
+    let theme = Theme::builtin("prime", ColorMode::TrueColor);
+    let dock = ActivityDock {
+        environment_runs: Some(EnvironmentRunCounts {
+            total: 3,
+            paused: 1,
+            stalled: 1,
+        }),
+        goal_label: Some("Pursuing goal (1m 00s)".to_string()),
+        ..ActivityDock::default()
+    };
+    assert_eq!(
+        dock.groups(),
+        vec![
+            ActivityGroup::Subagents,
+            ActivityGroup::Heartbeats,
+            ActivityGroup::Bash,
+            ActivityGroup::Environments,
+            ActivityGroup::Goal,
+        ]
+    );
+    let text = render_activity_dock(&dock, &theme, 140)[1]
+        .iter()
+        .map(|span| span.content.as_str())
+        .collect::<String>();
+    assert_eq!(
+        text,
+        " ◆ 0 subagents  ·  ◷ 0 heartbeats  ·  ▸ 0 shells  ·  ◈ 3 environments · ◐ 1 paused · ! 1 stalled  ·  Pursuing goal (1m 00s)"
     );
 }

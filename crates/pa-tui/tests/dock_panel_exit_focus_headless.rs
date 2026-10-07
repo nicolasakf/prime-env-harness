@@ -314,10 +314,8 @@ fn key(code: KeyCode) -> HeadlessStep {
     HeadlessStep::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }
 
-/// The dock's shortcut grab (`app.subagents.focus`, default alt+a): the
-/// prompt's Down is the subagents box's own affordance (#2862's TS
-/// isSelectable), so a session without subagents reaches the dock's other
-/// groups only through the shortcut.
+/// The dock's shortcut grab (`app.subagents.focus`, default alt+a).
+/// Down at the end of the prompt highlights the dock as well.
 fn alt_a() -> HeadlessStep {
     HeadlessStep::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT))
 }

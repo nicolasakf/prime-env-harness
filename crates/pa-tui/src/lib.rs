@@ -61,6 +61,8 @@ pub mod direct_transport;
 pub mod editor;
 pub mod effort_picker;
 mod enhanced_keys;
+mod environment_panel;
+mod environment_runs_view;
 pub mod error_summary;
 pub mod exit_guard;
 pub(crate) mod exit_restore;

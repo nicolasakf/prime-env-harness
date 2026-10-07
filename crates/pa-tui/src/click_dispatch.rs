@@ -57,6 +57,15 @@ impl SessionUi {
             return;
         }
         match pressed.action {
+            ClickAction::OpenEnvironmentActions => self.open_environment_actions(view),
+            ClickAction::EnvironmentControl(control) => {
+                if let Some(panel) = &mut view.environment_panel {
+                    let outcome = panel.activate(control);
+                    if let Err(error) = self.handle_environment_panel_outcome(outcome, view) {
+                        self.error_row(&error.to_string(), view);
+                    }
+                }
+            }
             ClickAction::ToggleCardExpansion(entry) => {
                 self.track_click("transcript");
                 view.toggle_card_expansion(entry);

@@ -19,6 +19,7 @@ impl SessionUi {
         client: DaemonClient,
         options: &InteractiveOptions,
         notes: mpsc::UnboundedSender<String>,
+        environment_failures: mpsc::UnboundedSender<super::environments::EnvironmentRequestFailure>,
         compaction_abort_notes: mpsc::UnboundedSender<CompactionAbortNote>,
         prompt_notes: mpsc::UnboundedSender<PromptSubmitNote>,
         share_notes: mpsc::UnboundedSender<ShareNote>,
@@ -46,6 +47,17 @@ impl SessionUi {
         let (orders_tx, orders_rx) = mpsc::unbounded_channel::<PromptOrder>();
         tokio::spawn(Self::prompt_submit_worker(orders_rx, prompt_notes.clone()));
         let mut session = SessionUi {
+            environment_profile: None,
+            environment_status: Value::Null,
+            environment_instances: Vec::new(),
+            environment_runs: Vec::new(),
+            environment_run_updates: activity_updates.environment_runs,
+            environment_refresh_in_flight: false,
+            environment_refresh_queued: false,
+            environment_definitions: Vec::new(),
+            environment_actions: Vec::new(),
+            environment_pending: None,
+            environment_failures,
             client,
             active_session_id: String::new(),
             session_id: String::new(),
@@ -411,6 +423,63 @@ impl SessionUi {
         let reconstructed = reconstruct(&attach);
         let mounted_session_changes = previous != attach.active_session_id;
         self.active_session_id = attach.active_session_id;
+        if self
+            .client
+            .supports_server_capability(pa_types::environments::ENVIRONMENT_CAPABILITY)
+        {
+            let state = self
+                .bounded_request(
+                    Duration::from_millis(UI_REQUEST_TIMEOUT_MS),
+                    DaemonCommand::GetConnectionState {
+                        id: None,
+                        active_session_id: self.active_session_id.clone(),
+                        rest: Map::default(),
+                    },
+                )
+                .await?;
+            self.environment_profile = if state["environmentParticipant"] == true {
+                Some(
+                    serde_json::from_value(state["environmentProfile"].clone())
+                        .context("participant policy unavailable; cannot attach safely")?,
+                )
+            } else {
+                None
+            };
+        }
+        self.environment_pending = None;
+        self.environment_actions = if self.environment_profile.is_some() {
+            let state = self
+                .environment_request("status", serde_json::json!({}))
+                .await?;
+            self.environment_status = state.clone();
+            serde_json::from_value(state["actions"].clone())?
+        } else {
+            Vec::new()
+        };
+        self.environment_instances = if self.environment_profile.is_none()
+            && self
+                .client
+                .supports_server_capability(pa_types::environments::ENVIRONMENT_CAPABILITY)
+        {
+            let instances = self
+                .environment_request("instances", serde_json::json!({}))
+                .await?;
+            serde_json::from_value(instances["instances"].clone())?
+        } else {
+            Vec::new()
+        };
+        self.environment_definitions = if self.environment_profile.is_none()
+            && self
+                .client
+                .supports_server_capability(pa_types::environments::ENVIRONMENT_CAPABILITY)
+        {
+            let catalog = self
+                .environment_request("catalog", serde_json::json!({}))
+                .await?;
+            serde_json::from_value(catalog["definitions"].clone())?
+        } else {
+            Vec::new()
+        };
         // The new attachment exists (the snapshot above rebuilt from it):
         // retire the superseded id's subscription now, addressed by the
         // captured previous id (the detach must target the OLD address,
@@ -481,6 +550,9 @@ impl SessionUi {
         // rebind): the skill commands land in the autocomplete provider
         // when the response arrives.
         self.spawn_command_catalog_refresh();
+        // The Environments dock group reads the builder's runs; the broadcast
+        // keeps it live from here on.
+        self.spawn_environment_runs_refresh();
         // The dock's bash rows follow the same `dock_fold` contract; the
         // capability gate matches the background refresh (older daemons
         // never see the request), and a failed fold fetch leaves the
@@ -592,6 +664,30 @@ impl SessionUi {
     /// Fold the pending snapshot into the view (fresh transcript, footer
     /// labels). Called after attach and after every session switch.
     pub(crate) fn rebuild_view(&mut self, view: &mut AgentView, kind: &RebuildKind) {
+        view.environment_panel = None;
+        view.environment_controls = self.environment_profile.is_some();
+        if self.environment_profile.is_some() {
+            view.editor.set_autocomplete_provider(Box::new(
+                crate::autocomplete::environments::EnvironmentAutocompleteProvider::new(
+                    &self.environment_actions,
+                ),
+            ));
+            self.pasted_images.clear();
+            view.editor.clear_history();
+            if matches!(kind, RebuildKind::Rebind) {
+                view.editor.set_text("");
+            }
+        } else if matches!(kind, RebuildKind::Rebind) {
+            view.editor.set_autocomplete_provider(Box::new(
+                crate::autocomplete::CombinedAutocompleteProvider::from_registry(self.cwd.clone()),
+            ));
+        }
+        if self
+            .client
+            .supports_server_capability(pa_types::environments::ENVIRONMENT_CAPABILITY)
+        {
+            self.update_environment_completions(view);
+        }
         let resync_bash = self.resync_bash.take();
         // The held cards' fate diverges by rebuild: a rebind drops them
         // with the old transcript (TS `resetCurrentSessionRenderState`), a
@@ -607,6 +703,7 @@ impl SessionUi {
         // stats and clears the readout left over from the previous session.
         if matches!(kind, RebuildKind::Rebind) {
             view.bash_view = None;
+            view.environment_runs_view = None;
             // The goal panel dies with the old session too: it is a
             // snapshot of the previous session's goal state, and until
             // the new session's own `goal_update` lands it would keep
@@ -645,7 +742,17 @@ impl SessionUi {
                 }
             }
         }
-        if let Some(model) = self.pending_model.take() {
+        if self.environment_profile.as_ref().is_some_and(|profile| {
+            matches!(profile.role, pa_types::environments::ProfileRole::Host)
+        }) {
+            // A table has no model; never carry the builder's tray over a rebind.
+            self.pending_model = None;
+            self.pending_model_provider = None;
+            self.pending_thinking_suffix = None;
+            self.context = None;
+            view.chrome.model_id = None;
+            view.chrome.model_provider = None;
+        } else if let Some(model) = self.pending_model.take() {
             view.chrome.model_id = Some(model);
             view.chrome.model_provider = self.pending_model_provider.take();
         }

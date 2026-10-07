@@ -117,11 +117,13 @@ impl SessionUi {
         // pickers, the `/tree` and `/fork` selectors, the `/mcp`
         // connections view, the `/share` loader, and the onboarding splash
         // own the frame like the TS overlays.
-        let overlay_focused = view.model_picker.is_some()
+        let overlay_focused = view.environment_panel.is_some()
+            || view.model_picker.is_some()
             || view.effort_picker.is_some()
             || view.heartbeats_picker.is_some()
             || view.goal_panel.is_some()
             || view.bash_view.is_some()
+            || view.environment_runs_view.is_some()
             || view.info_panel.is_some()
             || view.tree_selector.is_some()
             || view.fork_selector.is_some()
@@ -349,6 +351,11 @@ impl SessionUi {
     /// an open `/model` picker pastes into its search field; otherwise the
     /// editor takes it.
     pub(crate) fn handle_paste(&mut self, text: &str, view: &mut AgentView) {
+        if let Some(panel) = &mut view.environment_panel {
+            panel.paste(text);
+            self.dirty = true;
+            return;
+        }
         if let Some(picker) = view.model_picker.as_mut() {
             picker.paste(text);
             self.dirty = true;
@@ -363,7 +370,11 @@ impl SessionUi {
         // dispatch): a paste never lands in the hidden editor prompt,
         // where a later Enter would submit it unedited. The read-only
         // goal panel and info panel consume it the same way.
-        if view.bash_view.is_some() || view.goal_panel.is_some() || view.info_panel.is_some() {
+        if view.bash_view.is_some()
+            || view.environment_runs_view.is_some()
+            || view.goal_panel.is_some()
+            || view.info_panel.is_some()
+        {
             self.dirty = true;
             return;
         }
@@ -410,6 +421,16 @@ impl SessionUi {
         view: &mut AgentView,
         running: &mut bool,
     ) -> Result<()> {
+        if let Some(panel) = &mut view.environment_panel {
+            if let Some(id) = key_event_to_id(&key) {
+                if id == "ctrl+c" {
+                    self.exit_guard.note_ctrl_c_handled();
+                }
+                let outcome = panel.handle_key(&id);
+                return self.handle_environment_panel_outcome(outcome, view);
+            }
+            return Ok(());
+        }
         // Any non-Escape key re-arms the double-Esc tree shortcut (the
         // gesture is one shot per input chain, not per session — see the
         // arm site below): a real interaction anywhere on the surface —
@@ -440,6 +461,10 @@ impl SessionUi {
         // The bash view owns the frame the same way.
         if view.bash_view.is_some() {
             return self.handle_bash_view_key(key, view);
+        }
+        // The Environments runs panel owns the frame the same way.
+        if view.environment_runs_view.is_some() {
+            return self.handle_environment_runs_key(key, view).await;
         }
         // The read-only goal panel owns the frame the same way.
         if view.goal_panel.is_some() {
@@ -485,6 +510,37 @@ impl SessionUi {
         let Some(id) = key_event_to_id(&key) else {
             return Ok(());
         };
+        if self.environment_profile.is_some() {
+            let bindings = view.editor.keybindings();
+            if [
+                "app.session.new",
+                "app.session.resume",
+                "app.session.tree",
+                "app.session.fork",
+                "app.editor.external",
+                "app.clipboard.pasteImage",
+                "app.subagents.focus",
+            ]
+            .iter()
+            .any(|action| bindings.matches(&id, action))
+            {
+                self.note("Environment session policy blocks this shortcut. Use /env leave to return to the builder.", view);
+                return Ok(());
+            }
+            if bindings.matches(&id, "app.input.clear") {
+                if view.editor.is_showing_autocomplete() || view.editor.has_pending_autocomplete() {
+                    view.editor.cancel_autocomplete();
+                    self.dirty = true;
+                    return Ok(());
+                }
+                view.environment_panel = None;
+                if self.turn_active {
+                    self.interrupt_running_work(view);
+                }
+                view.editor.set_text("");
+                return Ok(());
+            }
+        }
         // The dispatch order below mirrors the TS key pipeline: the
         // transcript viewport keys (`tui.ts` consumes them before the
         // focused component in fullscreen), then the focused subagent
@@ -923,8 +979,13 @@ impl SessionUi {
         // no daemon fleet to browse, so the key stays consumed but only
         // reports that (TS `requestAgentsView` status).
         if view.editor.keybindings().matches(&id, "app.agents.back")
-            && view.editor.get_text().trim().is_empty()
+            && (view.editor.get_text().is_empty()
+                || (self.environment_profile.is_none() && view.editor.get_text().trim().is_empty()))
         {
+            if self.environment_profile.is_some() {
+                self.note("Environment session policy blocks this shortcut. Use /env leave to return to the builder.", view);
+                return Ok(());
+            }
             if self.return_to_agents_view {
                 self.open_agents_view = true;
                 self.exit_requested = true;
@@ -1081,16 +1142,12 @@ impl SessionUi {
                 }
             }
         }
-        // TS `CustomEditor.handleInput`'s move-below-prompt hook
-        // (`onMoveBelowPrompt` -> `focusSubagentSummary`): Down at the end
-        // of the prompt — no autocomplete open, no history browse, the
-        // cursor at the last line's end — hands the focus to the subagent
-        // summary line when it is selectable; every other Down falls
-        // through to the editor's cursor motion (a non-selectable line
-        // never takes it). TS `SubagentSummaryLine.isSelectable()` grants
-        // the grab only when subagents exist — the dock's other groups
-        // keep their `app.subagents.focus` shortcut, so the prompt's
-        // arrows stay the input-history recall in every session shape.
+        // Down at the end of the prompt — no autocomplete open, no history
+        // browse, the cursor at the last line's end — highlights the
+        // activity dock. The dock renders in every session, so the grab
+        // does not wait for subagents. A recalled prompt keeps Down for
+        // history (`is_history_navigation_active`); every other Down falls
+        // through to the editor's cursor motion.
         if view
             .editor
             .keybindings()
@@ -1109,6 +1166,20 @@ impl SessionUi {
             return Ok(());
         }
         view.editor.handle_input(&id);
+        if self.environment_profile.is_none()
+            && matches!(
+                view.editor.get_text().as_str(),
+                "/env pause " | "/env stop "
+            )
+            && self
+                .client
+                .supports_server_capability(pa_types::environments::ENVIRONMENT_CAPABILITY)
+        {
+            match self.refresh_environment_runs().await {
+                Ok(()) => self.update_environment_completions(view),
+                Err(error) => self.error_row(&format!("{error:#}"), view),
+            }
+        }
         // TS clears the exit hint as soon as the editor carries text: the
         // `Press Ctrl+C again to exit` row belongs to the empty prompt.
         if !view.editor.get_text().is_empty() {

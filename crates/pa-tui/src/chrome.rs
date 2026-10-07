@@ -110,6 +110,9 @@ pub enum ActivityGroup {
     Subagents,
     Heartbeats,
     Bash,
+    /// The builder's environment runs (fork-only): one item per run, never
+    /// per seat; mounted only while the session is an environment builder.
+    Environments,
     /// The active goal: its group is mounted while a goal is being
     /// pursued and opens the read-only goal panel (the objective and
     /// its facts); a goal that ended unmounts the row with it.
@@ -147,6 +150,10 @@ pub struct ActivityDock {
     /// kernel registry only): finished runs never inflate the indicator
     /// — they stay as rows inside the bash view.
     pub bash_running: usize,
+    /// The environment runs this session provisioned (its own and its
+    /// subagents'); `None` unmounts the group, as in sessions that are not
+    /// environment builders.
+    pub environment_runs: Option<EnvironmentRunCounts>,
     /// The active goal's dock label — `Pursuing goal (12m 05s)`-style,
     /// the elapsed-time form (the operator's 2026-09-24 directive: the
     /// row reads the time, the token budget lives inside the goal
@@ -157,12 +164,21 @@ pub struct ActivityDock {
     pub focused: bool,
 }
 
+/// The live environment runs the dock's Environments group counts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EnvironmentRunCounts {
+    pub total: usize,
+    pub paused: usize,
+    pub stalled: usize,
+}
+
 impl ActivityDock {
     /// The groups this dock renders, left to right — the arrow
     /// traversal order. The subagents, heartbeats, and shells groups
     /// always render (an empty one reads its zero count and stays
-    /// traversable); the goal group renders exactly while a live goal
-    /// keeps its row mounted.
+    /// traversable); the environments group renders while the session is
+    /// an environment builder, and the goal group renders exactly while a
+    /// live goal keeps its row mounted.
     #[must_use]
     pub fn groups(&self) -> Vec<ActivityGroup> {
         let mut groups = vec![
@@ -170,6 +186,9 @@ impl ActivityDock {
             ActivityGroup::Heartbeats,
             ActivityGroup::Bash,
         ];
+        if self.environment_runs.is_some() {
+            groups.push(ActivityGroup::Environments);
+        }
         if self.goal_label.is_some() {
             groups.push(ActivityGroup::Goal);
         }
@@ -797,6 +816,30 @@ pub fn render_activity_dock_segments(
                     if dock.bash_running == 1 { "" } else { "s" }
                 ),
             )],
+            ActivityGroup::Environments => {
+                let counts = dock.environment_runs.unwrap_or_default();
+                let mut environments = vec![theme.fg_span(
+                    running_color(counts.total),
+                    format!(
+                        "◈ {} environment{}",
+                        counts.total,
+                        if counts.total == 1 { "" } else { "s" }
+                    ),
+                )];
+                if counts.paused > 0 {
+                    environments.extend(cluster(
+                        &format!("◐ {} paused", counts.paused),
+                        ThemeColor::Warning,
+                    ));
+                }
+                if counts.stalled > 0 {
+                    environments.extend(cluster(
+                        &format!("! {} stalled", counts.stalled),
+                        ThemeColor::Error,
+                    ));
+                }
+                environments
+            }
             // The goal row carries the dock's activity convention: an
             // actively pursued goal reads green, and the paused and
             // budget-limited states read amber (the paused heartbeat
@@ -818,10 +861,15 @@ pub fn render_activity_dock_segments(
             // ruling: the same light band the hover paints, the same
             // style every activity surface's selected row paints);
             // each span keeps its own status color, so the selection
-            // never repaints the text.
+            // never repaints the text. The underline is the dock's own
+            // extra cue (the light band alone is easy to miss): it marks
+            // keyboard focus on the row, and the shared band stays
+            // modifier-free for every other surface.
             let band = theme.selection_row_style();
             for span in spans {
-                line.push(Span::styled(span.content.clone(), span.style.patch(band)));
+                line.push(
+                    theme.underline(Span::styled(span.content.clone(), span.style.patch(band))),
+                );
             }
         } else {
             for span in spans {

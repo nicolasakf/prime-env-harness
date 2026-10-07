@@ -98,7 +98,7 @@ impl Editor {
         if self.get_text().trim().is_empty() {
             return;
         }
-        if matches!(self.current_slash_command_context(), Some(c) if c.kind == crate::autocomplete::SlashKind::Name)
+        if matches!(self.current_slash_command_context(), Some(c) if c.kind == crate::autocomplete::SlashKind::Name || c.command_name.as_deref() == Some("env"))
         {
             self.request_autocomplete(false, true);
         } else {
@@ -110,8 +110,12 @@ impl Editor {
         if self.autocomplete.is_none() {
             let slash_ctx = self.current_slash_command_context();
             let c = ch.chars().next().unwrap_or(' ');
-            if c == '/'
-                && matches!(&slash_ctx, Some(ctx) if ctx.kind == crate::autocomplete::SlashKind::Name)
+            if (c == '/'
+                && matches!(&slash_ctx, Some(ctx) if ctx.kind == crate::autocomplete::SlashKind::Name))
+                || (c.is_whitespace()
+                    && slash_ctx
+                        .as_ref()
+                        .is_some_and(|context| context.command_name.as_deref() == Some("env")))
             {
                 self.request_autocomplete(false, false);
             } else if c == '@' || c == '#' {

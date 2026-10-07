@@ -29,6 +29,16 @@ impl AgentView {
             &self.theme,
             width,
         ));
+        if self.environment_controls {
+            self.click.record_dock_region(DockClickRegion {
+                dock_row: lines.len(),
+                cols: 0..width.min(15),
+                action: ClickAction::OpenEnvironmentActions,
+            });
+            lines.push(vec![self
+                .theme
+                .fg_span(ThemeColor::Accent, "  [ Actions ]")]);
+        }
         let context_rows = lines.len();
         let overlay_rows = self.render_autocomplete_overlay(width);
         lines.extend(overlay_rows);

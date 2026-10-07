@@ -66,6 +66,8 @@ pub(crate) struct PromptSubmitNote {
     /// the second and last attempt — the inline path's
     /// `rebind_available`).
     pub(crate) rebind_available: bool,
+    /// False when the environment accepted human input without a model turn.
+    pub(crate) forwarded: bool,
     /// The settled request: admitted/queued on `Ok`; the daemon error
     /// otherwise.
     pub(crate) result: Result<(), anyhow::Error>,
@@ -458,6 +460,13 @@ impl SessionUi {
         if text.is_empty() {
             return Ok(());
         }
+        if self.environment_profile.is_some() && text.starts_with('!') {
+            self.error_row(
+                "shell shortcuts are unavailable inside an environment",
+                view,
+            );
+            return Ok(());
+        }
         // TS `!`/`!!` (interactive-mode onSubmit): the bash shortcut
         // routes before the side-question capture and every prompt path.
         // A bare `!`/`!!` is bash mode with nothing to run — it is never
@@ -746,7 +755,11 @@ impl SessionUi {
             view.editor.set_text(text);
             return Ok(());
         }
-        let images = self.collect_images_for(text, view);
+        let images = if self.environment_profile.is_some() {
+            None
+        } else {
+            self.collect_images_for(text, view)
+        };
         // TS `onSubmit` resolves the submit off the render path: the
         // cleared editor paints THIS iteration's frame — the submit's
         // daemon round trip never gates the first frame after Enter — and
@@ -869,7 +882,9 @@ impl SessionUi {
                     "timed out after {UI_REQUEST_TIMEOUT_MS}ms waiting for the Prime Agent daemon response"
                 )
             })
-            .and_then(|result| result.map(|_| ()));
+            .and_then(std::convert::identity);
+            let forwarded = !result.as_ref().is_ok_and(|data| data["forwarded"] == false);
+            let result = result.map(|_| ());
             let _ = notes.send(PromptSubmitNote {
                 active_session_id: order.active_session_id,
                 session_id: order.session_id,
@@ -883,6 +898,7 @@ impl SessionUi {
                 input_id: order.input_id,
                 submitted_at: order.submitted_at,
                 rebind_available: order.rebind_available,
+                forwarded,
                 result,
             });
         }
@@ -939,6 +955,16 @@ impl SessionUi {
         }
         match note.result {
             Ok(()) => {
+                if !note.forwarded {
+                    // Settle this submission's watermark without starting a
+                    // loader. Later queued prompts already include this slot.
+                    self.turn_ends_seen += 1;
+                    self.note(
+                        "Environment input accepted. Use /env observe to inspect your view.",
+                        view,
+                    );
+                    return Ok(());
+                }
                 // `agent input stage` (v2, #2117): the submission's observed
                 // dispatch outcome at the submit seam - queued behind a
                 // running turn, or dispatched straight into an admitted

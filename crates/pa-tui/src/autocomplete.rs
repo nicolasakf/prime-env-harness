@@ -11,6 +11,7 @@ use crate::width::str_width;
 use crate::{Line, Span};
 use pa_types::slash_commands::SlashCommandRegistry;
 
+pub(crate) mod environments;
 mod fuzzy_file_search;
 pub use fuzzy_file_search::FileSearch;
 
@@ -840,6 +841,26 @@ impl CombinedAutocompleteProvider {
     /// Replace one command's argument completions (TS
     /// `command.getArgumentCompletions`, e.g. the `/tier` tier choices).
     pub fn set_argument_completions(&mut self, command: &'static str, items: Vec<CompletionItem>) {
+        if command == "env" && !self.commands.iter().any(|entry| entry.name == "env") {
+            self.commands.push(SlashCommandEntry {
+                name: "env".into(),
+                aliases: Vec::new(),
+                description: Some("Explore environment commands and actions".into()),
+                argument_hint: Some("[command]".into()),
+                takes_argument: true,
+                source_tag: None,
+            });
+        }
+        if command == "env" && !self.commands.iter().any(|entry| entry.name == "tutorial") {
+            self.commands.push(SlashCommandEntry {
+                name: "tutorial".into(),
+                aliases: Vec::new(),
+                description: Some("Getting started with Prime Environment Harness".into()),
+                argument_hint: None,
+                takes_argument: false,
+                source_tag: None,
+            });
+        }
         self.arguments.insert(command, items);
     }
 
@@ -942,6 +963,17 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
         cursor_col: usize,
         force: bool,
     ) -> Option<SuggestionLookup> {
+        if let Some(context) =
+            get_slash_command_context(lines, cursor_line, cursor_col).filter(|context| {
+                self.arguments.contains_key("env") && context.command_name.as_deref() == Some("env")
+            })
+        {
+            return environments::suggestions(
+                &context.prefix,
+                self.arguments.get("env").map_or(&[], Vec::as_slice),
+                environments::Mode::Builder,
+            );
+        }
         let line: Vec<char> = lines.get(cursor_line)?.chars().collect();
         let before: Vec<char> = line[..cursor_col.min(line.len())].to_vec();
         if let Some(at_prefix) = extract_at_prefix(&before) {

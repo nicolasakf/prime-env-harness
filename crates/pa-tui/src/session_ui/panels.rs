@@ -4,13 +4,15 @@
 
 use super::{
     key_event_to_id, mpsc, paused_heartbeat_count, picker_viewport_rows, tray_goal_label,
-    AgentView, BashActivityUpdate, CommandCatalogUpdate, DaemonCommand, DockFocusSource, GoalPanel,
-    HeartbeatsUpdate, InfoContent, InfoPanelAction, KeyEvent, Map, Result, SessionUi, Value,
+    AgentView, BashActivityUpdate, CommandCatalogUpdate, DaemonCommand, DockFocusSource,
+    EnvironmentRunsUpdate, GoalPanel, HeartbeatsUpdate, InfoContent, InfoPanelAction, KeyEvent,
+    Map, Result, SessionUi, Value,
 };
 
 pub(crate) struct ActivityUpdates {
     pub heartbeats: mpsc::UnboundedSender<HeartbeatsUpdate>,
     pub bash: mpsc::UnboundedSender<BashActivityUpdate>,
+    pub environment_runs: mpsc::UnboundedSender<EnvironmentRunsUpdate>,
     pub commands: mpsc::UnboundedSender<CommandCatalogUpdate>,
 }
 
@@ -139,6 +141,25 @@ impl SessionUi {
             heartbeats: self.heartbeat_catalog.len(),
             heartbeats_paused: paused_heartbeat_count(&self.heartbeat_catalog),
             bash_running,
+            environment_runs: (self.environment_profile.is_none()
+                && !self.active_session_id.is_empty()
+                && self
+                    .client
+                    .supports_server_capability(pa_types::environments::ENVIRONMENT_CAPABILITY))
+            .then(|| {
+                let runs = self.scoped_environment_runs();
+                crate::chrome::EnvironmentRunCounts {
+                    total: runs.len(),
+                    paused: runs
+                        .iter()
+                        .filter(|run| run.phase == pa_types::environments::RunPhase::Paused)
+                        .count(),
+                    stalled: runs
+                        .iter()
+                        .filter(|run| run.phase == pa_types::environments::RunPhase::Stalled)
+                        .count(),
+                }
+            }),
             goal_label,
             selected: self.activity_group,
             focused: self.subagents_focused,
@@ -161,17 +182,15 @@ impl SessionUi {
         }
         match source {
             DockFocusSource::PromptDown => {
-                // TS `SubagentSummaryLine.isSelectable()`: the prompt's
-                // Down is the subagents box's own affordance — subagents
-                // must exist, and the grab selects that group. The dock's
-                // other groups (heartbeats, shells, the goal row) never
-                // take this Down; their shortcut stays
-                // `app.subagents.focus`, so the prompt's arrows keep the
-                // input-history recall in every session shape.
-                if !(self.return_to_agents_view && self.subagent_counts.total > 0) {
-                    return false;
+                // The dock renders in every session, empty groups included.
+                // Down at the end of the prompt highlights that row. A
+                // session with subagents lands on that group; otherwise the
+                // current group stays selected, so a fresh chat still shows
+                // the highlight. History recall keeps Down while a recalled
+                // prompt is on screen.
+                if self.return_to_agents_view && self.subagent_counts.total > 0 {
+                    self.activity_group = crate::chrome::ActivityGroup::Subagents;
                 }
-                self.activity_group = crate::chrome::ActivityGroup::Subagents;
             }
             DockFocusSource::Shortcut => {}
         }
@@ -277,6 +296,9 @@ impl SessionUi {
             crate::chrome::ActivityGroup::Bash => {
                 self.emit_activity_opened("bash");
                 self.open_bash_view(view);
+            }
+            crate::chrome::ActivityGroup::Environments => {
+                self.open_environment_runs_view(view);
             }
             crate::chrome::ActivityGroup::Goal => {
                 self.emit_activity_opened("goal");

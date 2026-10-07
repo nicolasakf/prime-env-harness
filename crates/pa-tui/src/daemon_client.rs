@@ -127,6 +127,10 @@ pub enum DaemonClientEvent {
     /// when the heartbeat catalog changes (TS `broadcastGlobal`). The
     /// session view refreshes its open `/heartbeats` picker on it.
     HeartbeatsChanged,
+    /// `environment_runs_changed`: an environment run opened or changed
+    /// phase (Rust-only extension). The session view re-reads the runs its
+    /// Environments dock group shows.
+    EnvironmentRunsChanged,
     /// `model_catalog_changed`: a background daemon-side catalog refresh
     /// changed the served snapshot (the Rust-only no-stall picker-open
     /// extension; TS has no counterpart event — it awaits the refresh on
@@ -246,6 +250,7 @@ pub(crate) fn client_event_from_value(value: &Value) -> Option<DaemonClientEvent
             resync: value.get("resync") == Some(&Value::Bool(true)),
         }),
         "heartbeats_changed" => Some(DaemonClientEvent::HeartbeatsChanged),
+        "environment_runs_changed" => Some(DaemonClientEvent::EnvironmentRunsChanged),
         "model_catalog_changed" => Some(DaemonClientEvent::ModelCatalogChanged),
         "session_binding" => Some(DaemonClientEvent::SessionBinding {
             previous_active_session_id: value

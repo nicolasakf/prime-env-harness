@@ -308,7 +308,19 @@ impl AgentView {
                 )
             }
             ChatEntry::CustomPanel(row) => {
-                crate::custom_message::render::render_custom_panel(row, &self.theme, width)
+                if crate::custom_message::environment::is_observation(row)
+                    && !detail.tool_output_expanded()
+                {
+                    let mut collapsed = (**row).clone();
+                    collapsed.content = "Observation updated · expand to inspect".into();
+                    crate::custom_message::render::render_custom_panel(
+                        &collapsed,
+                        &self.theme,
+                        width,
+                    )
+                } else {
+                    crate::custom_message::render::render_custom_panel(row, &self.theme, width)
+                }
             }
         }
     }

@@ -55,6 +55,8 @@ impl Default for ShareLoader {
 }
 
 pub struct AgentView {
+    pub(crate) environment_panel: Option<crate::environment_panel::EnvironmentPanel>,
+    pub(crate) environment_controls: bool,
     pub theme: Theme,
     /// The chat markdown fenced-code indent (`markdown.codeBlockIndent`,
     /// TS `getMarkdownThemeWithSettings`; default two spaces).
@@ -126,6 +128,9 @@ pub struct AgentView {
     /// The dedicated bash view (the dock's Bash group's destination):
     /// while set, it owns the editor dock like the inline pickers.
     pub bash_view: Option<crate::bash_view::BashView>,
+    /// The Environments dock group's panel: while set, it owns the editor
+    /// dock like the other dock-group views.
+    pub(crate) environment_runs_view: Option<crate::environment_runs_view::EnvironmentRunsView>,
     /// A `/share` gist upload in flight (TS `BorderedLoader`): while set,
     /// it replaces the editor with the cancellable loader rows.
     pub share_loader: Option<ShareLoader>,
@@ -330,6 +335,8 @@ impl AgentView {
     #[must_use]
     pub fn new(theme: Theme) -> Self {
         Self {
+            environment_panel: None,
+            environment_controls: false,
             theme,
             code_block_indent: "  ".to_string(),
             editor: Editor::new(),
@@ -362,6 +369,7 @@ impl AgentView {
             heartbeats_picker: None,
             goal_panel: None,
             bash_view: None,
+            environment_runs_view: None,
             share_loader: None,
             reload_box: None,
             side_pane: None,
