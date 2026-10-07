@@ -48,6 +48,21 @@ either changes.
 - Tests must wait for observable readiness: flag fixed sleeps, polling loops, and retry-to-green wrappers used as readiness signals. A timeout may bound failure; it must not make the test pass.
 - Flag skipped or disabled tests without a reason stated at the test; flag tests that should use isolated ports and temporary paths but do not, and tests that leave shared state unrestored.
 
+## Development workflow
+
+- During iteration, require focused checks appropriate to the changed behavior.
+  Use debug `cargo run -p pa-cli --bin prime-env-harness` for manual checks; Cargo
+  rebuilds automatically on restart. Reserve release builds for final validation
+  or checks that require optimized performance.
+- Run heavy Cargo commands sequentially. Optional `-j 2` or
+  `CARGO_BUILD_JOBS=2 make check` reduces compilation parallelism.
+- Require `make check` once for final code validation before merge. It runs workspace
+  fmt, clippy, tests, and a release build. Avoid duplicate runs of those gates unless
+  later edits, failures, or unresolved concerns justify them. Keep dependency,
+  environment, and parity gates as required by AGENTS.md; report blocked gates.
+- Documentation-only changes need diff and whitespace review, without Rust builds
+  or tests. Focused iteration checks do not replace merge gates.
+
 ## Lint discipline
 
 - Zero-warning posture: the merge gates run clippy at `-D warnings`, so any new warning is a merge blocker. Flag new warnings and any suppression added to hide one.
@@ -58,3 +73,22 @@ either changes.
 
 - The model catalog is hand-maintained data: `crates/pa-ai/src/models_generated.rs` mirrors the TS `packages/ai/src/models.generated.ts` object literal (no generator, no generated JSON — edit it by hand exactly like its TS source), and the parity fixture `crates/pa-models/tests/fixtures/catalog.v1.json` refreshes with `scripts/generate-catalog-fixture.py` from the real `PrimeIntellect-ai/prime-agent-catalog` snapshot. Flag edits that would reintroduce a generator or hand-tweak the fixture rows.
 - Bulk data files are exempt from the size guidance; the exemption's reason is that the file mirrors an upstream data source.
+# Fork scope
+
+This is the Prime Environment Harness fork. Environment definitions, execution,
+participant tools/policy, the `environments_v1` daemon extension, and `/env` UI
+are deliberate additions exempt from upstream TypeScript parity and builder
+surface restrictions. Preserve ordinary builder behavior and cycle-free crate
+dependencies. `pa-environments` depends on `pa-types`; core and daemon may use
+it; TUI only uses shared wire types. Docker remains optional for all capabilities.
+Keep fork state and updates independent of ordinary Prime and sibling checkouts.
+Environment vs harness: a change to one environment (definition, rules, actions,
+views, prompts, policy, data, tests) belongs only in that environment's files
+(`crates/pa-environments/fixtures/<env>/`, its dedicated test file, or its definition in
+the data dir). Flag any harness change (`pa-environments` runtime/broker/runner/SDKs,
+`pa-core`, `pa-daemon`, `pa-tui`, `pa-cli`, prompt layers, `skills/`, `docs/`) that fixes
+or special-cases one environment, names a specific environment or its vocabulary, or
+branches on a definition id. Harness changes must be environment-independent; a fix that
+needs both must be split into a generic harness change and an environment change.
+Added direct dependencies use exact versions; require environment fixtures and
+Docker CI in addition to the existing Rust gates. Never commit without request.

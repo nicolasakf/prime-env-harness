@@ -1,3 +1,10 @@
+This checkout is **Prime Environment Harness**, a Rust fork for building and
+running executable environments. Read the [current harness guide](docs/harness.md)
+for architecture, builder skills, participants, automatic wakes, terminal forms,
+policies, and recovery. See [FORK.md](FORK.md) for fork identity and development
+commands. The upstream reference
+documentation follows.
+
 <p align="center">
   <a href="https://primeintellect.ai">
     <picture>

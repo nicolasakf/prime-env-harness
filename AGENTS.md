@@ -3,6 +3,43 @@
 Development rules for Prime Agent (Rust) on PrimeIntellect-ai/prime-agent, branch `main`.
 Every contributor (human or agent) must read this before working on this repo.
 
+## Environment vs harness (read before planning any change)
+
+This fork has two layers, and every change belongs to exactly one of them. Before you
+edit anything, decide which layer the change is for and say so in your plan.
+
+- **Environment**: one specific environment's content: its definition, rules, actions,
+  views, prompts, policy, seat/role behavior, data, and its tests. It lives only in that
+  environment's own files: the definition under `~/.prime-env-harness/environments/`
+  (user data, never in this repo), and in-repo only its fixture directory
+  `crates/pa-environments/fixtures/<env>/` plus its dedicated test file in
+  `crates/pa-environments/tests/` (for example `fixtures/card_market/` and
+  `tests/card_market.rs`).
+- **Harness**: everything that works for any environment: the `pa-environments` runtime,
+  broker, runner, SDKs, and Docker images; the `pa-core`, `pa-daemon`, `pa-tui`, and
+  `pa-cli` code; the `environments_v1` extension and `/env` UI; the prompt layers; the
+  `skills/` and `docs/` that describe them.
+
+Rules:
+
+- **Never change the harness to fix, tune, or special-case one environment.** If a
+  problem shows up in one environment, fix it in that environment's files first. Touch the
+  harness only when the defect or missing capability is genuinely environment-independent
+  and you can state it without naming the environment.
+- No environment names, ids, rules, or vocabulary (card, market, bid, relay, and the like)
+  in harness code, prompt layers, skills, docs, or harness tests. No `if env == ...`
+  branches, no per-environment constants, no behavior keyed on a definition id.
+  Harness tests and docs use generic examples or a neutral fixture.
+- If a fix needs both, split it: the harness change is generic, lands as its own logical
+  change, and is justified without reference to the environment; the environment change
+  adopts it in the environment's files. Do not ship them as one blended edit.
+- Lessons from one environment reach the harness only as generic design guidance
+  (`skills/environments/references/design.md`), never as that environment's specifics.
+- If you cannot tell which layer a change belongs to, stop and ask. Default to the
+  environment layer.
+- In the PR description, classify each changed file as environment or harness, and confirm
+  that no harness file mentions a specific environment.
+
 ## Repository
 
 - The repo is PrimeIntellect-ai/prime-agent; the Rust implementation lives on the `main` branch.
@@ -71,6 +108,27 @@ Every contributor (human or agent) must read this before working on this repo.
   only with every current site fixed in the same change.
 - Explain lint exceptions next to the `#[allow(...)]` or workspace configuration; keep
   exceptions narrow. Advisory ignores in `deny.toml` need a reason and review date.
+
+## Development workflow
+
+- During iteration, run focused tests for the changed behavior and scoped clippy when
+  needed. Use `cargo check -p <crate>` for a quick compile check. Broaden validation
+  when the change affects other crates or a failure reveals a wider concern.
+- Launch the development app with `cargo run -p pa-cli --bin prime-env-harness`.
+  Edit, exit the app, and rerun that command; Cargo rebuilds changed code automatically.
+  Use the debug build for routine manual checks. Release builds belong to final
+  validation or work that specifically requires optimized performance.
+- Run heavy Cargo commands sequentially. Do not overlap tests, clippy, or builds
+  against the same checkout. For lower CPU pressure, use `-j 2` on Cargo commands,
+  or `CARGO_BUILD_JOBS=2 make check`; this can increase elapsed time.
+- Run `make check` once after a code change is ready for final validation and before
+  merge. It includes workspace formatting, clippy, tests, and a release build; do
+  not separately repeat those same gates. Rerun checks only when later edits,
+  failures, or unresolved concerns require them. Run `make deny` when dependencies
+  change, and retain the required environment and parity verifiers.
+- Documentation-only changes need a diff and whitespace review, without Rust
+  compilation or tests. Report failed or unavailable gates accurately; focused
+  checks do not replace the merge requirements.
 
 ## Merge gates
 
@@ -161,3 +219,16 @@ Layering rules:
 ## References
 
 - Cursor Bugbot's PR review rules (`.cursor/BUGBOT.md`) mirror the standards in this file - update both whenever either changes.
+# Fork scope
+
+This checkout is `nicolasakf/prime-env-harness`, based on Prime's Rust workspace
+at `3358e0016bce7cf34a195af58bbd91a26e17d694`. The environment application uses
+`prime-env-harness` and `~/.prime-env-harness`; never edit sibling checkouts.
+The environment contract, participant profile, daemon extension, and `/env`
+UI are intentionally new surfaces and are exempt from upstream TypeScript
+parity and the immutable builder-tool contract below. Preserve upstream builder
+behavior. Docker is optional, including for participant Python.
+`pa-environments` owns execution and persistence and depends only on `pa-types`.
+`pa-core` and `pa-daemon` may depend on it; `pa-tui` still depends only on shared
+wire types. Direct dependencies added by this fork use exact versions. Follow the Development workflow above: focused environment tests during iteration,
+`make check` for final code validation, and `make deny` when dependencies change. Leave changes uncommitted unless asked.
