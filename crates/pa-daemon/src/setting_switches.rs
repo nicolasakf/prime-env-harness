@@ -363,6 +363,36 @@ impl Worker {
                 }
             }
         }
+        // `persist: true` (the model picker's scope key) also saves the list
+        // as the `enabledModels` patterns the next session resolves its
+        // scope from; an empty list clears the filter.
+        if payload.get("persist").and_then(Value::as_bool) == Some(true) {
+            let patterns: Vec<String> = scoped
+                .iter()
+                .filter_map(|entry| {
+                    let model = entry.get("model")?;
+                    let key = format!(
+                        "{}/{}",
+                        model.get("provider")?.as_str()?,
+                        model.get("id")?.as_str()?
+                    );
+                    Some(match entry.get("thinkingLevel").and_then(Value::as_str) {
+                        Some(level) => format!("{key}:{level}"),
+                        None => key,
+                    })
+                })
+                .collect();
+            let (cwd, agent_dir) = (
+                self.core.lock().unwrap().cwd.clone(),
+                &self.config.agent_dir,
+            );
+            let mut settings = pa_core::settings::SettingsManager::create(&cwd, agent_dir);
+            if let Err(error) =
+                settings.set_enabled_models((!patterns.is_empty()).then_some(patterns))
+            {
+                return response_failure(None, "set_scoped_models", &error.to_string(), None);
+            }
+        }
         self.core.lock().unwrap().scoped_models.clone_from(scoped);
         response_success(None, "set_scoped_models", None)
     }
@@ -1008,6 +1038,69 @@ mod tests {
             let response = worker.dispatch("set_scoped_models", &bad).await;
             assert!(!response.success, "must reject: {bad}");
         }
+    }
+
+    /// `set_scoped_models` with `persist: true` (the model picker's scope
+    /// key) saves the list as `enabledModels`, keeping each entry's
+    /// `:thinking` level; an empty list clears the setting. Without it the
+    /// settings file stays untouched.
+    #[tokio::test]
+    async fn set_scoped_models_persists_enabled_models_on_request() {
+        let worker = created_worker().await;
+        let settings_path = worker.config.agent_dir.join("settings.json");
+        let scoped = json!([
+            { "model": { "provider": "prime-inference", "id": "mock-1" } },
+            {
+                "model": { "provider": "prime-inference", "id": "mock-2" },
+                "thinkingLevel": "high",
+            },
+        ]);
+        let response = worker
+            .dispatch(
+                "set_scoped_models",
+                &json!({ "activeSessionId": "switch-session", "scopedModels": scoped }),
+            )
+            .await;
+        assert!(response.success, "failed: {response:?}");
+        assert!(
+            !settings_path.exists(),
+            "no persist flag, no settings write"
+        );
+
+        let response = worker
+            .dispatch(
+                "set_scoped_models",
+                &json!({
+                    "activeSessionId": "switch-session",
+                    "scopedModels": scoped,
+                    "persist": true,
+                }),
+            )
+            .await;
+        assert!(response.success, "failed: {response:?}");
+        let saved: Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings_path).expect("settings file"))
+                .expect("settings json");
+        assert_eq!(
+            saved["enabledModels"],
+            json!(["prime-inference/mock-1", "prime-inference/mock-2:high"])
+        );
+
+        let response = worker
+            .dispatch(
+                "set_scoped_models",
+                &json!({
+                    "activeSessionId": "switch-session",
+                    "scopedModels": [],
+                    "persist": true,
+                }),
+            )
+            .await;
+        assert!(response.success, "failed: {response:?}");
+        let saved: Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings_path).expect("settings file"))
+                .expect("settings json");
+        assert_eq!(saved["enabledModels"], Value::Null, "the filter is cleared");
     }
 
     /// `cycle_thinking_level` without a reasoning model answers success
