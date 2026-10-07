@@ -30,6 +30,7 @@ pub const DAEMON_APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// client command types in TS declared order, followed by the Rust-native
 /// supervisor/worker frames the Rust daemon additionally accepts).
 pub const KNOWN_COMMAND_TYPES: &[&str] = &[
+    "env",
     "ack_result",
     "list",
     "list_agent_peers",
@@ -304,6 +305,8 @@ pub fn supported_client_capabilities() -> &'static [&'static str] {
         "chunked_snapshot",
         "client_owned_sessions",
         "elide_snapshot_images",
+        "environments_v1",
+        "environments_seats_v1",
     ]
 }
 
@@ -595,7 +598,10 @@ fn write_response_line(buf: &mut Vec<u8>, response: &DaemonResponse) -> serde_js
 #[must_use]
 pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
     match command {
-        DaemonCommand::GetDirectWorkerTransport {
+        DaemonCommand::Env {
+            active_session_id, ..
+        }
+        | DaemonCommand::GetDirectWorkerTransport {
             active_session_id, ..
         }
         | DaemonCommand::Attach {
@@ -929,6 +935,7 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
 #[must_use]
 pub fn command_type_name(command: &DaemonCommand) -> &'static str {
     match command {
+        DaemonCommand::Env { .. } => "env",
         DaemonCommand::List { .. } => "list",
         DaemonCommand::ListSavedSessions { .. } => "list_saved_sessions",
         DaemonCommand::ListAgentPeers { .. } => "list_agent_peers",

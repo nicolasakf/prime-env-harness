@@ -142,6 +142,11 @@ pub struct SessionSummary {
     pub runtime_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unfinished_action_count: Option<u32>,
+    /// `host` or `seat` for a session that belongs to an environment run
+    /// (Rust-only extension): the agents view hides these, since the
+    /// builder's Environments dock group is where a run is reached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_role: Option<String>,
     /// Whether this session has already drawn the Anthropic subscription
     /// ban-risk warning (Rust-native, operator directive 2026-09-29): the
     /// once-per-session-lifecycle gate the interactive client reads from
