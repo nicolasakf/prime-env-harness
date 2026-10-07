@@ -33,6 +33,9 @@ allow = [
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",
   "MIT",
+  # No-attribution MIT, used by borrow-or-share through the JSON Schema validator.
+  # Reviewed 2026-10-01; equivalent permissive obligations to the existing 0BSD grant.
+  "MIT-0",
   "ISC",
   "BSD-2-Clause",
   "BSD-3-Clause",
