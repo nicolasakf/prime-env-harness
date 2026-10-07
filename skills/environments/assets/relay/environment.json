@@ -1,0 +1,21 @@
+{
+  "protocol_version": 2,
+  "name": "Turn relay",
+  "purpose": "Pass a baton across the supplied seats for a configured number of rounds.",
+  "language": "python",
+  "instructions": "Observe the current turn. Call pass only when you are the next seat. End your turn while waiting. Baton updates are public; your assistant replies remain private.",
+  "roles": [
+    {"name": "player", "description": "A participant in the relay", "min_seats": 1, "max_seats": 16, "occupants": ["human", "agent"]}
+  ],
+  "setup_schema": {
+    "type": "object",
+    "properties": {
+      "rounds": {"type": "integer", "title": "Rounds", "description": "Times each seat passes the baton", "minimum": 1, "maximum": 20, "default": 1}
+    },
+    "required": ["rounds"],
+    "additionalProperties": false
+  },
+  "python_execution": false,
+  "recommended_backend": "local",
+  "direct_messages": false
+}
