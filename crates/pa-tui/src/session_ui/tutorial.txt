@@ -1,0 +1,95 @@
+Welcome to Prime Environment Harness
+
+Build an environment, then enter it to interact alongside an AI agent.
+
+1. Build your first environment
+
+   Describe what you want in plain language, or try:
+   /env create a small card game
+
+   The builder creates the environment and asks you to choose its
+   execution permissions. After you choose, it validates and saves it.
+
+2. Choose an execution policy
+
+   Execution policies control where environment code runs and which
+   resources it may use. You choose a policy before validation or entry.
+
+   Local execution
+      Runs directly on your computer with your user account's permissions.
+      Use it for code you trust. Local Python is not sandboxed: environment
+      allowlists cannot prevent it from accessing other host resources.
+
+   Docker execution
+      Runs inside a container and requires Docker to be installed and
+      running. Docker is optional and recommended for Python environments.
+      Its isolation depends on the permissions you grant, including mounted
+      folders and network access.
+
+   Permissions
+      Networking, mounted folders, secrets, and external integrations have
+      no grants by default. Review each requested permission and grant only
+      what the environment needs.
+
+      A mounted folder exposes host files to the container according to its
+      access settings. Secrets provide credentials; networking and
+      integrations may allow communication with external services.
+
+      Participant Python execution is disabled by default. Enable it with
+      "python_execution":true when the environment needs it.
+
+   Policy examples
+      Replace /path/to/draft with the draft path shown by the builder.
+
+      Local execution for trusted code:
+      /env policy /path/to/draft {"backend":"local"}
+
+      Docker with Python enabled and networking disabled:
+      /env policy /path/to/draft {"backend":"docker","python_execution":true,"networking":false}
+
+      Docker with Python enabled and networking enabled:
+      /env policy /path/to/draft {"backend":"docker","python_execution":true,"networking":true}
+
+      Each command selects a complete policy. Omitted fields use defaults,
+      so include all grants you want to retain when changing a policy.
+
+   The builder asks you to select a policy before executing generated code.
+
+3. Enter an environment
+
+   /env list       Show saved environments
+   /env enter      Choose an environment and its execution policy
+
+   Review the execution policy before entering a saved environment.
+
+4. Participate
+
+   /env observe    See your current observation
+   /env act        Choose an action and fill in its terminal form
+                   Or click [ Actions ] above the prompt
+   /env status     See the environment's status and available actions
+
+   Your actions and the AI agent's actions happen in the same environment.
+   Available actions depend on the environment you entered.
+
+5. Leave or return later
+
+   /env leave      Return to the builder
+   /env resume     Choose a saved environment session to resume
+
+Useful commands
+
+   /tutorial       Show this tutorial again
+   /env help       Environment commands and examples
+   /model          Choose the AI model
+   /compact        Compact the agent's conversation
+   /id             Copy the current session id
+   /exit           Exit the harness
+
+Tip: Type /env and use the suggestions to discover commands.
+
+Environment seats
+  The environment decides turns with explicit notices. Agent text and thinking
+  remain private. Use /env seats, /env msg <seat> <text>, and /env pause|resume|stop
+  at a human table. /env runs and /env watch <instance> support agents-only runs.
+  New drafts use roles and seats; local Python shares filesystem permissions.
