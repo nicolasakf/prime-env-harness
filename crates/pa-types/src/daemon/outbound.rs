@@ -305,6 +305,12 @@ pub enum DaemonOutbound {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// The Rust-only environment extension: an environment run opened or
+    /// changed phase, so every client re-reads the runs its dock shows.
+    EnvironmentRunsChanged {
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     RosterUpdate {
         changed: Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]

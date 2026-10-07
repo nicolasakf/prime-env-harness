@@ -60,6 +60,8 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand { name: "btw", description: "Ask a side question without adding it to the session; replies follow up, esc returns", execution: SlashCommandExecution::Client, argument_hint: Some("<question>"), aliases: &["side"], takes_argument: true },
     BuiltinSlashCommand { name: "name", description: "Set or show the session display name", execution: SlashCommandExecution::Client, argument_hint: Some("[name]"), aliases: &["rename"], takes_argument: true },
     BuiltinSlashCommand { name: "session", description: "Show session info", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
+    // Fork-only client command. Upstream has no equivalent; it stays out of session admission.
+    BuiltinSlashCommand { name: "id", description: "Copy the current session id to clipboard", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
     BuiltinSlashCommand { name: "system-prompt", description: "Show the exact system prompt sent to the model", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
     BuiltinSlashCommand { name: "logs", description: "Show where daemon and client logs are saved", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
     BuiltinSlashCommand { name: "traces", description: "Preview, upload, or configure Prime Agent traces", execution: SlashCommandExecution::Client, argument_hint: Some("[status|on|off|preview|upload|upload-current|upload-all|login]"), aliases: &[], takes_argument: false },
@@ -258,6 +260,21 @@ fn slash_command_edit_distance(left: &str, right: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn id_command_is_client_side() {
+        let registry = SlashCommandRegistry::builtin();
+        let command = registry.get("id").expect("id");
+        assert_eq!(command.execution, SlashCommandExecution::Client);
+        assert!(!command.takes_argument);
+        assert_eq!(
+            command.description,
+            "Copy the current session id to clipboard"
+        );
+        let resolved = registry.parse("/id").unwrap();
+        assert_eq!(resolved.name, "id");
+        assert!(resolved.args.is_empty());
+    }
 
     #[test]
     fn registry_resolves_aliases() {

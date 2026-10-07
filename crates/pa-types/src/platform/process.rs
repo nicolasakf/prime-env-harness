@@ -319,6 +319,28 @@ pub fn restore_default_sigint() -> anyhow::Result<()> {
     anyhow::bail!("suspend to background requires a POSIX process group")
 }
 
+/// Kill a process group created and still owned by the caller, including children.
+/// The caller must stop using the identifier after delivery to avoid PID reuse.
+///
+/// # Errors
+/// Rejects invalid identifiers and reports signal failures other than an absent group.
+#[cfg(unix)]
+pub fn terminate_owned_process_group(group: u32) -> anyhow::Result<()> {
+    let group = libc::pid_t::try_from(group)?;
+    if group <= 1 {
+        anyhow::bail!("invalid owned process group");
+    }
+    // SAFETY: a checked positive ID is negated to address only the caller's
+    // separately spawned group. Zero and the all-processes sentinel are excluded.
+    if unsafe { libc::kill(-group, libc::SIGKILL) } != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ESRCH) {
+            return Err(error.into());
+        }
+    }
+    Ok(())
+}
+
 /// True only for a process that is actually running: zombies do not count
 /// (TS `isProcessAlive`). Errors when the platform cannot answer.
 ///

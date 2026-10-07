@@ -26,6 +26,7 @@ pub fn command_plane(command_type: &str) -> DaemonCommandPlane {
     use DaemonCommandPlane::{Control, Session};
     match command_type {
         "attach"
+        | "env"
         | "detach"
         | "prompt"
         | "cancel_prompt_admission"

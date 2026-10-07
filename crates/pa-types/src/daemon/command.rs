@@ -102,6 +102,17 @@ pub struct PromptInput {
     rename_all_fields = "camelCase"
 )]
 pub enum DaemonCommand {
+    /// Fork extension, negotiated with `environments_v1`.
+    Env {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        operation: String,
+        #[serde(default)]
+        parameters: Value,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     List {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

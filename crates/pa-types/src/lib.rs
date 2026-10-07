@@ -15,6 +15,7 @@
 
 pub mod ai;
 pub mod daemon;
+pub mod environments;
 pub mod goal;
 pub mod incident;
 pub mod memory_release;

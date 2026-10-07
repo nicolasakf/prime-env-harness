@@ -5,6 +5,13 @@ The single shared vocabulary crate. Nothing else is shared between crates.
 ## Scope
 Wire and domain types + serde only: AI messages/content blocks/tool calls/usage/stream events, session JSONL entry schema, daemon wire protocol messages, worker frames.
 
+The fork's environment wire types include optional `Instance.created_at` Unix
+milliseconds. Persistence and legacy timestamp recovery belong to pa-environments;
+date rendering and instance selection belong to pa-tui.
+The optional `EnvironmentManifest.setup_schema` is JSON Schema data for human
+setup forms. Validation and default application belong to pa-environments;
+controls and rendering belong to pa-tui.
+
 Daemon wire mechanics shared by the serving side (pa-daemon) and clients (pa-tui/pa-cli) live here because pa-tui depends on pa-types alone:
 - `daemon::framing`: the private-frame codec of the worker socket (direct-attach clients speak it too).
 - `daemon::plane`: the session/control command-plane table (worker-side peer gating and client-side socket routing both read it).
@@ -60,3 +67,5 @@ Everything in this crate is deliberately `pub` - it is the cross-crate contract.
 
 ## Depends on
 serde, serde_json, thiserror, anyhow, tokio, regex (the incident classifier's TS log-message patterns; see the `incident` scope entry). No workspace crates.
+
+Environment contract v2 adds validated seat/role IDs, rosters, run limits, notice/finish/progress metadata, seat calls and replies, wake payloads, and immutable bindings with peer roles and the validated setup configuration the instance was initialized with (`SeatBinding::config`, optional, absent for protocol 1; read from the persisted initialization receipt and rendered into the participant system prompt, so wakes, resume and compaction all carry it). These are new public shared domain/wire types; execution remains in pa-environments and scheduling in pa-daemon. No workspace dependency is added.
