@@ -479,8 +479,42 @@ pub const AUTH_CATEGORIES: &[&str] = &[
 
 /// The #2117 feature names.
 pub const FEATURE_NAMES: &[&str] = &[
-    "model", "login", "logout", "effort", "goal", "new", "resume", "fork", "clone", "tree",
+    "model",
+    "login",
+    "logout",
+    "effort",
+    "goal",
+    "new",
+    "resume",
+    "fork",
+    "clone",
+    "tree",
     "feedback",
+    "environment",
+    "environment_private_response",
+    "environment_command_help",
+    "environment_tutorial",
+    "environment_action_picker",
+    "environment_action_form",
+    "environment_setup_form",
+    "environment_instance_picker",
+    "environment_list",
+    "environment_builder_policy",
+    "environment_wake",
+    "environment_contract_v2",
+    "environment_table_view",
+    "environment_say",
+    "environment_direct_message",
+    "environment_multi_seat",
+    "environment_builder_provision",
+    "environment_run_control",
+    "environment_run_limit",
+    "environment_turn_retry",
+    "environment_stale_view",
+    "environment_obsolete_wake",
+    "environment_spectate",
+    "environment_privileged_read",
+    "environment_runs_panel",
 ];
 
 /// The #2117 feature outcomes.
@@ -494,8 +528,23 @@ pub const FEATURE_OUTCOMES: &[&str] = &[
 
 /// The #2117 configuration choices (effort levels, goal actions).
 pub const CONFIGURATION_CHOICES: &[&str] = &[
-    "off", "minimal", "low", "medium", "high", "xhigh", "max", "create", "status", "pause",
-    "resume", "clear", "unknown",
+    "off",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "create",
+    "status",
+    "pause",
+    "resume",
+    "stop",
+    "clear",
+    "builder_pause",
+    "builder_resume",
+    "builder_stop",
+    "unknown",
 ];
 
 /// The #2117 onboarding stages.
