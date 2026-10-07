@@ -143,6 +143,74 @@ impl SessionUi {
                     });
                 }
             }
+            Some(ModelPickerAction::ModelScopeChanged {
+                provider,
+                model_id,
+                scoped,
+            }) => {
+                // The picker already shows the new membership; the daemon's
+                // scope (the cycler's list) and the saved `enabledModels`
+                // follow. The other entries ride back as the daemon holds
+                // them, so their `:thinking` levels survive.
+                let state = self.connection_state(view).await;
+                let mut entries: Vec<Value> = state
+                    .as_ref()
+                    .and_then(|state| state.get("scopedModels"))
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                entries.retain(|entry| {
+                    let model = entry.get("model");
+                    let held = |field: &str| model.and_then(|model| model.get(field)?.as_str());
+                    held("provider") != Some(provider.as_str())
+                        || held("id") != Some(model_id.as_str())
+                });
+                if scoped {
+                    let model = self
+                        .model_catalog
+                        .iter()
+                        .find(|model| model.provider == provider && model.id == model_id)
+                        .and_then(|model| serde_json::to_value(model).ok())
+                        .unwrap_or_else(
+                            || serde_json::json!({ "provider": provider, "id": model_id }),
+                        );
+                    entries.push(serde_json::json!({ "model": model }));
+                }
+                self.send_scoped_models(entries, "toggle_model_scope", scoped, view)
+                    .await;
+                self.dirty = true;
+            }
+            Some(ModelPickerAction::ScopeReordered { keys }) => {
+                // The entries ride back as the daemon holds them (their
+                // `:thinking` levels survive), in the picker's new order.
+                let state = self.connection_state(view).await;
+                let held: Vec<Value> = state
+                    .as_ref()
+                    .and_then(|state| state.get("scopedModels"))
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let entries: Vec<Value> = keys
+                    .iter()
+                    .filter_map(|key| {
+                        held.iter()
+                            .find(|entry| {
+                                let model = entry.get("model");
+                                let held = |field: &str| {
+                                    model.and_then(|model| model.get(field)?.as_str())
+                                };
+                                held("provider")
+                                    .zip(held("id"))
+                                    .is_some_and(|(provider, id)| {
+                                        ModelPicker::model_key_provider(provider, id) == *key
+                                    })
+                            })
+                            .cloned()
+                    })
+                    .collect();
+                self.send_scoped_models(entries, "reorder_scope", true, view)
+                    .await;
+            }
             Some(ModelPickerAction::Cancel) => {
                 view.model_picker = None;
                 self.picker_restored_draft = false;
@@ -194,6 +262,46 @@ impl SessionUi {
         }
         self.update_model_eligibility_filters(view);
         Ok(())
+    }
+
+    /// Send the picker's new scope to the daemon (the cycler's list) and
+    /// save it as `enabledModels`; a failure renders as an error row, and
+    /// success reports the adoption event with `action`.
+    async fn send_scoped_models(
+        &mut self,
+        entries: Vec<Value>,
+        action: &'static str,
+        scoped: bool,
+        view: &mut AgentView,
+    ) {
+        let mut rest = Map::default();
+        rest.insert("persist".to_string(), Value::Bool(true));
+        let sent = self
+            .bounded_request(
+                Duration::from_millis(UI_REQUEST_TIMEOUT_MS),
+                DaemonCommand::SetScopedModels {
+                    id: None,
+                    active_session_id: self.active_session_id.clone(),
+                    scoped_models: Value::Array(entries),
+                    rest,
+                },
+            )
+            .await;
+        match sent {
+            Ok(_) => {
+                if let Some(telemetry) = self.telemetry.clone() {
+                    tokio::spawn(async move {
+                        telemetry.scoped_models_used(action, scoped).await;
+                    });
+                }
+            }
+            Err(error) => {
+                view.push_entry(ChatEntry::Status {
+                    text: format!("\u{26a0} Error: {error:#}"),
+                    kind: StatusKind::Error,
+                });
+            }
+        }
     }
 
     /// The session's current model, resolved against the picker catalog

@@ -1,12 +1,13 @@
 //! The picker's scope concern (TS the model selector's `scope` state):
 //! the session's scoped keys against the catalog, the active-list swap
-//! behind Alt+S, and the selection rule a scope change re-applies.
+//! behind the scope key, the per-model membership toggle, and the selection
+//! rule a scope change re-applies.
 
-use super::ModelPicker;
+use super::{ModelPicker, ModelPickerAction};
 
 /// The active list (TS `ModelScope`): the session's scoped entries or the
 /// full catalog. The picker opens `Scoped` while the session holds scoped
-/// models and the toggle key swaps between them.
+/// models and the scope key swaps between them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModelScope {
     All,
@@ -28,6 +29,88 @@ impl ModelPicker {
     /// never strands the scoped side).
     pub(crate) fn has_scoped_models(&self) -> bool {
         !self.scoped_models.is_empty()
+    }
+
+    /// Whether the model is in the session's scope (the row's `scoped` tag).
+    pub(crate) fn is_scoped(&self, model: &pa_types::ai::Model) -> bool {
+        let key = Self::model_key_provider(&model.provider, &model.id);
+        self.scoped_models.contains(&key)
+    }
+
+    /// The membership key: add the highlighted model to the scope (at the
+    /// end of the scope order) or remove it. The list stays on the side the
+    /// user is looking at, except that removing the last scoped model drops
+    /// the empty scoped side back to the catalog, and the highlight stays on
+    /// the model it was on while it is still listed.
+    pub(super) fn toggle_selected_model_scope(&mut self) -> ModelPickerAction {
+        let Some(model) = self.selected_model() else {
+            return ModelPickerAction::None;
+        };
+        let (provider, model_id) = (model.provider.clone(), model.id.clone());
+        let key = Self::model_key_provider(&provider, &model_id);
+        let scoped =
+            if let Some(position) = self.scoped_models.iter().position(|entry| *entry == key) {
+                self.scoped_models.remove(position);
+                false
+            } else {
+                self.scoped_models.push(key.clone());
+                true
+            };
+        if !self.has_scoped_models() {
+            self.scope = ModelScope::All;
+        }
+        self.resolve_scope_positions();
+        let query = self.search.value().to_string();
+        self.filter_models(&query);
+        if let Some(position) = self
+            .filtered
+            .iter()
+            .position(|&index| self.key_at(index) == key)
+        {
+            self.selected = position;
+        } else {
+            self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
+        }
+        ModelPickerAction::ModelScopeChanged {
+            provider,
+            model_id,
+            scoped,
+        }
+    }
+
+    /// The reorder keys: move the highlighted model one place earlier
+    /// (`-1`) or later (`1`) in the scope order, which is the order Alt+M
+    /// cycles in. It only runs on the scoped side with an empty filter, where
+    /// the listed rows are the whole scope; the highlight follows the model,
+    /// and the first and last rows stay put.
+    pub(super) fn move_selected_scoped_model(&mut self, direction: isize) -> ModelPickerAction {
+        if !self.scoped_side() || !self.search.value().is_empty() {
+            return ModelPickerAction::None;
+        }
+        let Some(target) = self.selected.checked_add_signed(direction) else {
+            return ModelPickerAction::None;
+        };
+        let (Some(&from), Some(&to)) =
+            (self.filtered.get(self.selected), self.filtered.get(target))
+        else {
+            return ModelPickerAction::None;
+        };
+        let moved = self.key_at(from);
+        let neighbor = self.key_at(to);
+        let (Some(moved_at), Some(neighbor_at)) = (
+            self.scoped_models.iter().position(|key| *key == moved),
+            self.scoped_models.iter().position(|key| *key == neighbor),
+        ) else {
+            return ModelPickerAction::None;
+        };
+        self.scoped_models.swap(moved_at, neighbor_at);
+        self.resolve_scope_positions();
+        let query = self.search.value().to_string();
+        self.filter_models(&query);
+        self.selected = target;
+        ModelPickerAction::ScopeReordered {
+            keys: self.scoped_models.clone(),
+        }
     }
 
     /// Re-map the scoped keys against the loaded catalog: an entry

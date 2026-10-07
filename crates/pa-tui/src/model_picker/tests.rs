@@ -141,8 +141,7 @@ fn frame_text(picker: &mut ModelPicker) -> Vec<String> {
 
 /// The scope view (TS the model selector's `scope`): a session with
 /// scoped models opens on the scoped list with the scope row above
-/// it, Alt+S swaps to the full catalog and back, and the macOS
-/// option-composed `ß` toggles too (`matchesOptionComposedKey`).
+/// it and Tab swaps to the full catalog and back.
 #[test]
 fn scope_toggles_between_the_scoped_list_and_the_catalog() {
     let catalog = battery_catalog();
@@ -172,16 +171,16 @@ fn scope_toggles_between_the_scoped_list_and_the_catalog() {
         .expect("the search field renders");
     assert!(
         scope_row.is_some_and(|scope_row| {
-            scope_row < search_row && rows[scope_row].contains("Alt+S scope (all/scoped)")
+            scope_row < search_row && rows[scope_row].contains("Tab scope (all/scoped)")
         }),
         "the scope row renders above the search field with its leading space:
 {}",
         rows.join("\n")
     );
     assert_eq!(
-        picker.handle_key("alt+s", &kb()),
+        picker.handle_key("tab", &kb()),
         ModelPickerAction::ScopeToggled { scoped: false },
-        "alt+s swaps to the catalog side"
+        "tab swaps to the catalog side"
     );
     assert_eq!(
         picker.filtered_len(),
@@ -189,22 +188,124 @@ fn scope_toggles_between_the_scoped_list_and_the_catalog() {
         "the catalog side lists everything"
     );
     assert_eq!(
-        picker.handle_key("alt+s", &kb()),
+        picker.handle_key("tab", &kb()),
         ModelPickerAction::ScopeToggled { scoped: true },
-        "alt+s swaps back to the scoped side"
+        "tab swaps back to the scoped side"
     );
     assert_eq!(picker.filtered_len(), 2);
-    assert_eq!(
-        picker.handle_key("\u{df}", &kb()),
-        ModelPickerAction::ScopeToggled { scoped: false },
-        "the option-composed \u{df} toggles too"
+}
+
+/// Alt+P (and the macOS option-composed `\u{3c0}`) adds the highlighted model
+/// to the scope and removes it again; the first add creates the scope row,
+/// the catalog side tags scoped models, and removing the last scoped model
+/// returns the empty scoped side to the catalog.
+#[test]
+fn the_membership_key_scopes_and_unscopes_the_highlighted_model() {
+    let mut picker = ModelPicker::new(picker_options(battery_catalog()));
+    assert!(!picker.has_scoped_models());
+    let first = picker.selected_model().cloned().expect("a model is listed");
+    let changed = |scoped| ModelPickerAction::ModelScopeChanged {
+        provider: first.provider.clone(),
+        model_id: first.id.clone(),
+        scoped,
+    };
+    assert_eq!(picker.handle_key("alt+p", &kb()), changed(true));
+    assert!(picker.has_scoped_models());
+    assert_eq!(picker.filtered_len(), 9, "the catalog side stays listed");
+    assert!(
+        frame_text(&mut picker)
+            .iter()
+            .any(|row| row.starts_with(" Scope: all | scoped")),
+        "the scope row appears with the first scoped model"
     );
-    assert_eq!(picker.filtered_len(), 9);
+    assert_eq!(
+        picker.handle_key("tab", &kb()),
+        ModelPickerAction::ScopeToggled { scoped: true }
+    );
+    assert_eq!(
+        picker.filtered_len(),
+        1,
+        "the scoped side lists the one scoped model"
+    );
+    assert_eq!(picker.handle_key("\u{3c0}", &kb()), changed(false));
+    assert!(!picker.has_scoped_models());
+    assert_eq!(
+        picker.filtered_len(),
+        9,
+        "the emptied scoped side falls back to the catalog"
+    );
+}
+
+/// Alt+Up/Alt+Down move the highlighted scoped model one place in the scope
+/// order on the scoped side; the highlight follows it, the ends stay put, and
+/// the catalog side and a typed filter leave the order alone.
+#[test]
+fn the_reorder_keys_move_scoped_models_on_the_scoped_side() {
+    let mut options = picker_options(battery_catalog());
+    let keys: Vec<String> = [0, 3, 5]
+        .into_iter()
+        .map(|index| {
+            let model = &options.models[index];
+            ModelPicker::model_key_provider(&model.provider, &model.id)
+        })
+        .collect();
+    options.scoped_models = keys.clone();
+    let mut picker = ModelPicker::new(options);
+    let listed = |picker: &ModelPicker| -> Vec<String> {
+        (0..picker.filtered_len())
+            .filter_map(|position| {
+                let model = picker.model_at(picker.filtered_index(position)?)?;
+                Some(ModelPicker::model_key_provider(&model.provider, &model.id))
+            })
+            .collect()
+    };
+    assert_eq!(
+        listed(&picker),
+        keys,
+        "the scoped side lists the scope order"
+    );
+    assert_eq!(
+        picker.handle_key("alt+up", &kb()),
+        ModelPickerAction::None,
+        "the first row stays put"
+    );
+    let moved = vec![keys[1].clone(), keys[0].clone(), keys[2].clone()];
+    assert_eq!(
+        picker.handle_key("alt+down", &kb()),
+        ModelPickerAction::ScopeReordered {
+            keys: moved.clone()
+        }
+    );
+    assert_eq!(listed(&picker), moved);
+    assert_eq!(
+        picker.selected_index(),
+        1,
+        "the highlight follows the model"
+    );
+    assert_eq!(
+        picker.handle_key("alt+up", &kb()),
+        ModelPickerAction::ScopeReordered { keys },
+        "alt+up moves it back"
+    );
+
+    picker.set_query("mock");
+    assert_eq!(
+        picker.handle_key("alt+down", &kb()),
+        ModelPickerAction::None,
+        "a typed filter leaves the order alone"
+    );
+    picker.set_query("");
+    picker.handle_key("tab", &kb());
+    assert_eq!(
+        picker.handle_key("alt+down", &kb()),
+        ModelPickerAction::None,
+        "the catalog side leaves the order alone"
+    );
 }
 
 /// A scope the loaded catalog cannot resolve still scopes (TS keys the
 /// scope off the session's list, never off what the catalog resolves):
-/// the picker opens on the scoped side with no rows, Alt+S still works,
+/// the picker opens on the scoped side with no rows, Tab still works,
 /// and a refresh that brings the entries fills the scoped rows.
 #[test]
 fn a_scope_the_catalog_cannot_resolve_still_scopes() {
@@ -215,9 +316,9 @@ fn a_scope_the_catalog_cannot_resolve_still_scopes() {
     assert!(picker.has_scoped_models(), "the session's scope counts");
     assert_eq!(picker.filtered_len(), 0, "the scoped side has no rows yet");
     assert_eq!(
-        picker.handle_key("alt+s", &kb()),
+        picker.handle_key("tab", &kb()),
         ModelPickerAction::ScopeToggled { scoped: false },
-        "alt+s still offers the catalog side"
+        "tab still offers the catalog side"
     );
     assert_eq!(
         picker.filtered_len(),
@@ -225,9 +326,9 @@ fn a_scope_the_catalog_cannot_resolve_still_scopes() {
         "the catalog side lists everything"
     );
     assert_eq!(
-        picker.handle_key("alt+s", &kb()),
+        picker.handle_key("tab", &kb()),
         ModelPickerAction::ScopeToggled { scoped: true },
-        "alt+s returns to the scoped side"
+        "tab returns to the scoped side"
     );
     let mut refreshed = battery_catalog();
     refreshed.push(model("prime-inference", "mock-9", "Mock 9", false, None));
@@ -319,7 +420,10 @@ fn renders_the_ts_inline_panel_shape() {
     // The key hint.
     assert_eq!(
         rows[16],
-        " \u{2191}/\u{2193} model \u{b7} \u{2190}/\u{2192} effort \u{b7} Enter select \u{b7} Esc close"
+        format!(
+            " \u{2191}/\u{2193} model \u{b7} \u{2190}/\u{2192} effort \u{b7} {} scope/unscope \u{b7} Enter select \u{b7} Esc close",
+            crate::keybindings::format_key_text("alt+p")
+        )
     );
     // One blank line of spacing below the shortcuts (the operator's
     // 2026-09-24 directive), never a rule.

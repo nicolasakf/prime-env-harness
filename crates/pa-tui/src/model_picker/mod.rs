@@ -46,6 +46,17 @@ pub enum ModelPickerAction {
     /// The scope key toggled the picker's list (the caller reports the
     /// adoption event; the picker stays mounted).
     ScopeToggled { scoped: bool },
+    /// The membership key added the highlighted model to the session's
+    /// scope (`scoped: true`) or removed it; the caller sends the new scope
+    /// to the daemon. The picker has already applied it to its own lists.
+    ModelScopeChanged {
+        provider: String,
+        model_id: String,
+        scoped: bool,
+    },
+    /// The reorder keys moved a scoped model; `keys` is the whole scope in
+    /// its new order (`provider/id`), which the caller sends to the daemon.
+    ScopeReordered { keys: Vec<String> },
 }
 
 /// The outcome of dispatching `/model [search]`.
@@ -267,6 +278,19 @@ impl ModelPicker {
                 };
             }
             return ModelPickerAction::None;
+        }
+        if kb.matches(key, "app.model.toggleModelScope")
+            || kb.matches_option_composed(key, "app.model.toggleModelScope")
+        {
+            return self.toggle_selected_model_scope();
+        }
+        for (binding, direction) in [
+            ("app.model.moveScopedUp", -1),
+            ("app.model.moveScopedDown", 1),
+        ] {
+            if kb.matches(key, binding) {
+                return self.move_selected_scoped_model(direction);
+            }
         }
         // Keep arrows available for editing a filter; an empty filter or an
         // explicit move into the list controls effort.
@@ -840,6 +864,11 @@ impl ModelPicker {
         let mut segments: Vec<String> = Vec::new();
         if self.is_current(model) {
             segments.push("current".to_string());
+        }
+        // The scoped side lists only scoped models; the catalog side marks
+        // the ones in scope so the membership key's effect is visible.
+        if !self.scoped_side() && self.is_scoped(model) {
+            segments.push("scoped".to_string());
         }
         if !self.is_configured(model) {
             segments.push("require sign in".to_string());

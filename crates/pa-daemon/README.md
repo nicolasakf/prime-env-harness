@@ -2,6 +2,16 @@
 
 Session supervision and wire serving.
 
+The fork negotiates `environments_v1` for `env` commands and lifecycle events.
+`agent_engine::environments` owns builder host handlers, instance attachment,
+participant policy checks, and input filtering. Builders can apply a user-requested
+policy with `environments.select_policy`; the environment skill requires asking
+for the policy first, then validating automatically after selection. Saved
+participant bindings are checked on reconnect; direct worker requests use the same restrictions as
+supervisor requests. Leaving or losing the participant's owning attachment
+cancels active work and closes its environment workers. Uncertain operations
+remain blocked for explicit recovery through pa-environments.
+
 ## Scope
 ACP stdio transport (`acp`): the JSON-RPC serve surface for Agent
 Client Protocol clients - a thin transport over the pa-core session engine
@@ -267,6 +277,10 @@ broadcast owns its surface here too (the worker's cron-store
 to every client, so any heartbeat mutation anywhere in the daemon reaches
 attached UIs daemon-wide).
 
+Participant display privacy lives in `worker/environment_privacy.rs`: it projects
+private environment rows and tool traffic at the client transport boundary while
+retaining original model context and persistence. No new public Rust API.
+
 ## Non-goals
 No agent behavior inside workers beyond hosting a pa-core engine; no UI.
 
@@ -275,4 +289,8 @@ Supervisor entrypoint, worker entrypoint, `mcp_login::{WorkerMcpLoginUi, wire_wo
 
 
 ## Depends on
-pa-types, pa-core (one-way).
+pa-types, pa-core, pa-agent, pa-ai, pa-telemetry, pa-models, pa-environments (one-way).
+
+The `controls` operation lists non-terminal runs with the `builder_session_id` each run persisted, and the host emits `environment_runs_changed` on its first state save and whenever its run changes phase; the worker forwards it as an outbound frame and the supervisor broadcasts it to every client (the `model_catalog_changed` pattern), so a builder's dock re-reads its runs. Host and seat session summaries carry `environmentRole` (`host` or `seat`) read from their persisted participant profile.
+
+The environment host owns model-less supervision, authenticated seat ports, durable wake admission, run controls and limits, and builder provisioning/read handlers. Seat tools and Python bridges share its admission checks. Public host history contains only human/public table rows; private seat context stays in separate transcripts. Supervisor-internal state reads carry a stored seat capability for crash adoption; ordinary clients cannot inspect seat state or history. These modules are private and add no exported daemon Rust API. Seat calls carry the committed-state version their model request was generated from; the host refuses a stale mutation with a `stale_view` reply (current view and version) before environment code runs, and `TurnStarted` revalidates a wake's actionable tasks against the environment's wait state, settling an obsolete wake without a model request.

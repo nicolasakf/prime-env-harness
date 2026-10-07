@@ -62,6 +62,15 @@ pub(super) fn render(
             line.push(theme.fg_span(ThemeColor::Dim, key));
             line.push(muted(" scope (all/scoped)"));
         }
+        if picker.scoped_side() {
+            let reorder = ["app.model.moveScopedUp", "app.model.moveScopedDown"]
+                .map(|binding| kb.first_key(binding).map(|key| format_key_text(&key)));
+            if let [Some(up), Some(down)] = reorder {
+                line.push(muted(" \u{b7} "));
+                line.push(theme.fg_span(ThemeColor::Dim, format!("{up}/{down}")));
+                line.push(muted(" reorder"));
+            }
+        }
         lines.push(crate::width::truncate_line(&line, width, "..."));
     }
     lines.extend(search_field_lines(
@@ -324,7 +333,10 @@ fn hint_line(theme: &Theme, width: usize, kb: &KeybindingsManager) -> Line {
             kb.first_key("tui.editor.cursorRight")
                 .map_or_else(|| "\u{2192}".to_string(), |key| format_key_text(&key))
         );
-        format!("{navigate} model \u{b7} {effort} effort \u{b7} {select_key} select \u{b7} {close_key} close")
+        let model_scope = kb
+            .first_key("app.model.toggleModelScope")
+            .map_or_else(|| "Alt+P".to_string(), |key| format_key_text(&key));
+        format!("{navigate} model \u{b7} {effort} effort \u{b7} {model_scope} scope/unscope \u{b7} {select_key} select \u{b7} {close_key} close")
     } else {
         format!("{select_key} select \u{b7} {close_key} close")
     };
