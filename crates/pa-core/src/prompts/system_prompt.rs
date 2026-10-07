@@ -93,6 +93,9 @@ pub struct BuildSystemPromptOptions<'a> {
     pub rlm_parent_agent: Option<&'a str>,
     /// Enabled user-configured generic MCP servers.
     pub generic_mcp_servers: Vec<String>,
+    /// Whether this session runs in the Prime Environment Harness application,
+    /// which states that application's purpose at the start of the tail.
+    pub environment_harness: bool,
 }
 
 /// Build the system prompt (assembled text only).
@@ -146,15 +149,24 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         .sum::<usize>()
         + 2 * segments.len().saturating_sub(1);
 
-    // The dynamic tail, in fixed order: packages -> project context ->
-    // skills inventory -> MCP servers -> environment -> session role ->
-    // additional guidance -> appended prompt.
+    // The dynamic tail, in fixed order: harness purpose (environment
+    // harness only) -> packages -> project context -> skills inventory ->
+    // MCP servers -> environment -> session role -> additional guidance ->
+    // appended prompt.
     let tools: Vec<&str> = options
         .selected_tools
         .clone()
         .unwrap_or_else(|| vec!["ipython"]);
     let has_ipython = tools.contains(&"ipython");
     let has_file_access = has_ipython || tools.contains(&"bash");
+
+    if options.environment_harness {
+        segments.push(PromptSegment::dynamic_segment(
+            "harness-purpose",
+            "prompts/layers/environment_harness.md",
+            layers::ENVIRONMENT_HARNESS_SECTION.trim().to_string(),
+        ));
+    }
 
     segments.push(PromptSegment::dynamic_segment(
         "packages",
@@ -467,6 +479,40 @@ mod tests {
         assert!(tail.contains("<available_skills>"));
         assert!(tail.contains("Recursive agent depth: 0 (root)"));
         assert!(tail.contains("Pre-installed Python packages: requests, httpx,"));
+    }
+
+    #[test]
+    fn environment_harness_purpose_leads_the_tail_without_touching_the_prefix() {
+        let upstream = system_prompt_breakdown(&base_options());
+        let harness = system_prompt_breakdown(&BuildSystemPromptOptions {
+            environment_harness: true,
+            ..base_options()
+        });
+        assert_eq!(
+            upstream.assembled[..upstream.cached_prefix_len],
+            harness.assembled[..harness.cached_prefix_len]
+        );
+        let purpose = harness
+            .segments
+            .iter()
+            .find(|segment| segment.name == "harness-purpose")
+            .expect("harness purpose segment");
+        assert_eq!(purpose.kind, SegmentKind::Dynamic);
+        assert_eq!(purpose.text, layers::ENVIRONMENT_HARNESS_SECTION.trim());
+        let names: Vec<&str> = harness
+            .segments
+            .iter()
+            .map(|segment| segment.name)
+            .collect();
+        assert_eq!(
+            names[3..5],
+            ["harness-purpose", "packages"],
+            "purpose is the first tail segment"
+        );
+        assert!(upstream
+            .segments
+            .iter()
+            .all(|segment| segment.name != "harness-purpose"));
     }
 
     #[test]

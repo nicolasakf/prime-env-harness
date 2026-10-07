@@ -164,7 +164,9 @@ const INTERNAL_HOST_REQUESTS: &[&str] =
 /// Map one registered host-request type to the prompt token that documents
 /// it. `None` when the request is host-internal.
 fn prompt_token_for_host_request(request: &str) -> Option<String> {
-    if INTERNAL_HOST_REQUESTS.contains(&request) {
+    // The environment builder surface is fork-only; the `environments` and
+    // `env-harness` skills document it, not the upstream core layer.
+    if INTERNAL_HOST_REQUESTS.contains(&request) || request.starts_with("environments.") {
         return None;
     }
     Some(
@@ -422,6 +424,10 @@ fn required_surface_tokens() -> BTreeSet<String> {
         }
     }
     for (import, functions) in bundled_python_skills() {
+        // Fork skills document themselves; the upstream core layer does not.
+        if FORK_PACKAGED_SKILLS.contains(&import.as_str()) {
+            continue;
+        }
         required.insert(import.clone());
         for function in functions {
             if function == "run" || function == "status" {
@@ -531,6 +537,9 @@ const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "websearch",
 ];
 
+/// Skills this fork adds to the TS set (environment builder and operating guide).
+const FORK_PACKAGED_SKILLS: &[&str] = &["env-harness", "environments"];
+
 /// The bundled skills directory matches the TS packaged set name-for-name:
 /// the generic `mcp` skill is present and markdown-only, and the retired
 /// per-service pair (linear/notion) is gone.
@@ -538,11 +547,11 @@ const TS_PACKAGED_SKILL_SET: &[&str] = &[
 fn bundled_skills_match_the_ts_packaged_set() {
     let skills = sorted_bundled_skills();
     let names: Vec<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
-    let mut expected = TS_PACKAGED_SKILL_SET.to_vec();
+    let mut expected = [TS_PACKAGED_SKILL_SET, FORK_PACKAGED_SKILLS].concat();
     expected.sort_unstable();
     assert_eq!(
         names, expected,
-        "the packaged skill set must match the TS packaged set"
+        "the packaged skill set must be the TS packaged set plus the fork's skills"
     );
     assert!(
         !names.contains(&"linear") && !names.contains(&"notion"),

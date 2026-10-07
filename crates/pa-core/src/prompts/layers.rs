@@ -21,6 +21,11 @@ pub const OPINIONATED_LAYER: &str = include_str!("layers/opinionated.md");
 /// The per-model instruction map (file `layers/per_model.md`).
 pub const PER_MODEL_MAP: &str = include_str!("layers/per_model.md");
 
+/// The environment-harness purpose statement (file `layers/environment_harness.md`).
+/// Not part of the static prefix: it is a dynamic-tail segment emitted only by the
+/// Prime Environment Harness application, so upstream prompts stay byte-identical.
+pub const ENVIRONMENT_HARNESS_SECTION: &str = include_str!("layers/environment_harness.md");
+
 /// Layer names, in assembly order, for breakdown rendering.
 pub const LAYER_NAMES: [&str; 4] = ["core", "usage", "opinionated", "per-model"];
 
