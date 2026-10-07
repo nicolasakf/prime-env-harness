@@ -475,11 +475,11 @@ fn socket_spelling_of(pid: u32, value: &str) -> String {
 /// these - a session's arbitrary long-running command (`python worker`, a
 /// tool server) never qualifies, whatever it inherited.
 /// Unix only: the same linux/unix callers as [`is_worker_argv`].
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", test)))]
 pub(crate) fn is_product_binary(exe: &str) -> bool {
     matches!(
         Path::new(exe).file_name().and_then(|name| name.to_str()),
-        Some("prime-agent" | "pa-daemon")
+        Some("prime-agent" | "prime-env-harness" | "pa-daemon")
     )
 }
 
@@ -490,7 +490,7 @@ pub(crate) fn is_product_binary(exe: &str) -> bool {
 /// tool server that merely INHERITED the worker env, and a user's
 /// same-socket command that happens to carry a `worker` argument.
 /// Unix only: the linux census and the unix tests are its users.
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", test)))]
 pub(crate) fn is_worker_argv(argv: &[String]) -> bool {
     argv.first().is_some_and(|exe| is_product_binary(exe))
         && argv.get(1).map(String::as_str) == Some("worker")
@@ -537,7 +537,9 @@ fn proc_environ_names_active_session(pid: u32, active_session: &str) -> bool {
     })
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
+#[cfg(all(unix, not(target_os = "linux"), test))]
+// Only the Linux census has a caller; retain the platform seam for its tests.
+#[allow(dead_code)]
 fn proc_environ_names_active_session(_pid: u32, _active_session: &str) -> bool {
     false
 }
@@ -619,7 +621,7 @@ fn resolve_relative_socket_tokens(pid: u32, argv: &mut [String]) {
 /// the argument tokens is never a target. Unix only: the spelling it
 /// compares against is the unix socket spelling, and every caller (the
 /// linux supervisor census, the unix tests) sits behind a unix gate.
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", test)))]
 pub(crate) fn supervisor_argv_names_socket(argv: &[String], socket: &str) -> bool {
     let Some(exe) = argv.first() else {
         return false;
@@ -758,7 +760,7 @@ fn protected_worker_pids(agent_dir: &Path, socket_path: &Path) -> HashSet<u32> {
 /// Pure `std` (canonicalize + components): it compiles on every unix -
 /// darwin included, which the unconditional `supervisor_argv_names_socket`
 /// (the argv-only view the supervisor census normalizes with) requires.
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", test)))]
 pub(crate) fn normalize_socket_spelling(path: &Path) -> String {
     if let Ok(canonical) = path.canonicalize() {
         return canonical.to_string_lossy().to_string();
@@ -847,8 +849,10 @@ mod tests {
     /// Kills and reaps the child on any exit path (a failed assertion in
     /// between would otherwise leak the `sleep` into the test machine: the
     /// std child kills nothing on drop).
+    #[cfg(target_os = "linux")]
     struct ReapOnDrop(Option<std::process::Child>);
 
+    #[cfg(target_os = "linux")]
     impl Drop for ReapOnDrop {
         fn drop(&mut self) {
             if let Some(mut child) = self.0.take() {
