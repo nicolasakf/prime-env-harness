@@ -282,10 +282,13 @@ fn compat_from_value(value: Option<&serde_json::Value>) -> Option<ModelCompat> {
     serde_json::from_value(value.clone()).ok()
 }
 
-/// Compat merge: override fields win; nested routing objects merge.
+/// Compat merge: override fields win; nested routing objects merge. Without
+/// an override the base is returned unchanged (TS `mergeCompat`).
 #[must_use]
 pub fn merge_compat(base: Option<&ModelCompat>, over: Option<ModelCompat>) -> Option<ModelCompat> {
-    let over = over?;
+    let Some(over) = over else {
+        return base.cloned();
+    };
     let mut merged = base.map(|compat| compat.raw.clone()).unwrap_or_default();
     for (key, value) in over.raw {
         // Routing sub-objects merge instead of replacing.
@@ -426,7 +429,13 @@ pub fn load_custom_models(
                 .or_else(|| provider_config.base_url.clone())
                 .or_else(|| defaults.as_ref().map(|(_, url)| url.clone()));
             let Some(base_url) = base_url else { continue };
-            let compat = merge_compat(None, compat_from_value(provider_config.compat.as_ref()));
+            // TS `mergeCompat(providerConfig.compat, modelDef.compat)`: the
+            // provider's compat is the base, the model definition overrides.
+            let provider_compat = compat_from_value(provider_config.compat.as_ref());
+            let compat = merge_compat(
+                provider_compat.as_ref(),
+                compat_from_value(model_def.compat.as_ref()),
+            );
             result.models.push(Model {
                 id: model_def.id.clone(),
                 name: model_def
@@ -541,6 +550,61 @@ mod tests {
             map.get(&pa_types::ai::ModelThinkingLevel::Xhigh),
             Some(&Some("xhigh".to_string()))
         );
+    }
+
+    /// A model definition's own compat reaches the model, layered over the
+    /// provider's: model keys win, other provider keys survive, and the
+    /// nested `only` list is the model's while sibling routing keys merge.
+    #[test]
+    fn custom_model_compat_overrides_provider_compat() {
+        let result = load_custom_models(
+            r#"{ "providers": { "vercel-ai-gateway": {
+                "compat": {
+                    "supportsStore": false,
+                    "maxTokensField": "max_tokens",
+                    "vercelGatewayRouting": { "order": ["a", "b"] }
+                },
+                "models": [
+                    { "id": "routed", "api": "openai-completions",
+                      "baseUrl": "https://ai-gateway.vercel.sh/v1",
+                      "compat": {
+                          "maxTokensField": "max_completion_tokens",
+                          "vercelGatewayRouting": { "only": ["relace"] }
+                      } },
+                    { "id": "inherits", "api": "openai-completions",
+                      "baseUrl": "https://ai-gateway.vercel.sh/v1" }
+                ]
+            } } }"#,
+            &|name| name == "vercel-ai-gateway",
+            &|_| None,
+        );
+        assert!(result.error.is_none());
+        let compat = |index: usize| result.models[index].compat.as_ref().map(|c| c.raw.clone());
+        assert_eq!(
+            compat(0).map(serde_json::Value::Object),
+            Some(serde_json::json!({
+                "supportsStore": false,
+                "maxTokensField": "max_completion_tokens",
+                "vercelGatewayRouting": { "order": ["a", "b"], "only": ["relace"] }
+            }))
+        );
+        assert_eq!(
+            compat(1).map(serde_json::Value::Object),
+            Some(serde_json::json!({
+                "supportsStore": false,
+                "maxTokensField": "max_tokens",
+                "vercelGatewayRouting": { "order": ["a", "b"] }
+            }))
+        );
+    }
+
+    /// TS `mergeCompat`: without an override the base compat is kept.
+    #[test]
+    fn merge_compat_without_override_keeps_base() {
+        let base: ModelCompat =
+            serde_json::from_value(serde_json::json!({ "supportsStore": false })).unwrap();
+        assert_eq!(merge_compat(Some(&base), None), Some(base));
+        assert_eq!(merge_compat(None, None), None);
     }
 
     #[test]
