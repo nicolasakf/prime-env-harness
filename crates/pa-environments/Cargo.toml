@@ -1,0 +1,31 @@
+[package]
+name = "pa-environments"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Environment definitions, isolated language workers, instances, and recovery."
+
+[features]
+docker-integration = []
+
+[[test]]
+name = "docker"
+required-features = ["docker-integration"]
+
+[dependencies]
+pa-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+sha2 = "=0.10.9"
+uuid = { version = "=1.26.1", features = ["v4"] }
+jsonschema = { version = "=0.33.0", default-features = false }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[lints]
+workspace = true

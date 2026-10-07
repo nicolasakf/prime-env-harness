@@ -1,0 +1,60 @@
+{
+  "protocol_version": 2,
+  "name": "Sequential Card Market",
+  "purpose": "Two-player sequential card-value trading over multiple freshly dealt hands, with cumulative P&L and automatic turn attention.",
+  "language": "python",
+  "python_execution": false,
+  "recommended_backend": "docker",
+  "direct_messages": false,
+  "roles": [
+    {
+      "name": "player",
+      "description": "A trading player; either a human or an agent.",
+      "min_seats": 2,
+      "max_seats": 2,
+      "occupants": [
+        "human",
+        "agent"
+      ]
+    }
+  ],
+  "setup_schema": {
+    "type": "object",
+    "properties": {
+      "private_cards_per_player": {
+        "type": "integer",
+        "title": "Private cards per player",
+        "description": "Hole cards dealt to each of the two players. Together with community cards, at most 52 cards may be dealt.",
+        "minimum": 1,
+        "maximum": 25,
+        "default": 2
+      },
+      "community_card_count": {
+        "type": "integer",
+        "title": "Community cards per hand",
+        "description": "Also the number of trading rounds per hand. Reveal one card after each completed trading round.",
+        "minimum": 1,
+        "maximum": 50,
+        "default": 5
+      },
+      "trades_per_round": {
+        "type": "integer",
+        "title": "Trades per trading round",
+        "description": "Executions required before revealing the next community card.",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 3
+      },
+      "settlement_rounds": {
+        "type": "integer",
+        "title": "Hands to settle",
+        "description": "Freshly dealt hands to play. Only cumulative P&L carries into the next hand. Large games may reach the run limits.",
+        "minimum": 1,
+        "default": 1
+      }
+    },
+    "additionalProperties": false
+  },
+  "instructions": "Exactly two players, each human or agent; use the supplied seat IDs and player_order. The harness deals on entry using this instance's setup configuration; your system prompt lists the actual values for this run. The first roster seat controls next_hand. Opening priority alternates every round and flips with every hand: the first roster seat opens round 1 of odd-numbered hands and the second opens round 1 of even-numbered hands, so the opener of round r in hand k is the first seat when k + r is even and the second otherwise. After next_hand the opener may be the other seat; then you wait and the opener is woken. A standard shuffled 52-card deck has A=1, 2\u201310 face value, J=11, Q=12, K=13, with suits S/H/D/C. The contract settles to the sum of BOTH players' private-card ranks and ALL community-card ranks. Your hole cards alone are private until settlement. Do not peek at the deck or publish your private cards during trading.\nEach hand has exactly community_card_count trading rounds. Each round starts with no market, ends after trades_per_round executions, and reveals exactly one community card. The last reveal settles the hand immediately; there is no extra final trading round. On your turn, if no market exists, open_market posts integer 0 <= bid < ask. Otherwise choose buy, sell, or improve_market from available_actions. Each execution trades one contract; there is no pass/cancel. improve_market raises the bid and/or lowers the ask without worsening either, strictly improves at least one side, and takes ownership of BOTH sides even if one price is unchanged. At a one-tick spread improvement is impossible. You cannot execute your own quote side. buy takes the ask; sell hits the bid. After a non-round-ending trade, the executed quote owner reopens a fresh market; it need not improve the old market. At a round boundary, the round's opener (opening_priority) overrides provider reopening.\nPositions and cash reset each hand. P&L = cash + position * settlement value. After nonfinal settlement both hands and hand P&L are public; the first roster seat invokes next_hand after reviewing them. Cumulative P&L and completed-hand count carry forward; cards, market, trades, positions and cash reset. The final settlement finishes the run, and all players tied for highest cumulative P&L win.\nOnly the active seat acts. Explicit environment notices automatically wake the next legal seat in either human-versus-agent or agent-versus-agent play. No human 'your turn' prompt is needed. If awaiting another player, do not act for them; end your turn with a plain reply and no tool call, and wait for a wake. Never call say to wait, acknowledge or confirm; when it is not your turn say is rejected. If you complete an action and remain the active seat (for example after next_hand), continue with your available action. say is PUBLIC table chat, open only on your own turn (it is rejected otherwise): both players see it in recent_events on their next view, long messages show only an excerpt, and it never wakes a peer, changes priority or advances the turn. Independent private messaging is disabled. Assistant replies and thinking stay private and do not communicate to the table.\nEach wake gives your complete current state, and every action result returns your updated state; you keep no memory of earlier turns and have no observe tool, so rely on it. State keys: you, opponent, player_order (the first seat controls next_hand), phase, opening_priority (hand, hand_opener, round_opener), progress (hands_settled of hands_total, trading_round of rounds_per_hand, trades_this_round of trades_per_round), community_cards, your_private_cards, active_player, market (bid, ask, bid_owner, ask_owner, or null), positions and cash (this hand), total_pnl (cumulative), available_actions, recent_events (the latest public events across hands, oldest first, each with seq, hand, round, kind, actor and its quote, execution or chat text; earlier_events_omitted counts older ones), and past_hands (recent settled hands with value, pnl, both players' cards, the board and a compact line per market action, which show how your opponent trades relative to what they held; actions_omitted counts lines dropped to keep the view small, and earlier_hands_summary totals older hands). Rounds are numbered from 1 everywhere. After settlement all_private_cards and settlement are also shown. Your opponent's cards are never shown before settlement.",
+  "agent_context": "stateless"
+}

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/pa-telemetry",
     "crates/pa-types",
+    "crates/pa-environments",
     "crates/pa-ai",
     "crates/pa-models",
     "crates/pa-agent",
