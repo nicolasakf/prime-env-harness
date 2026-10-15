@@ -58,7 +58,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand { name: "share", description: "Share session as a secret GitHub gist", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
     BuiltinSlashCommand { name: "copy", description: "Copy last agent message to clipboard", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
     BuiltinSlashCommand { name: "btw", description: "Ask a side question without adding it to the session; replies follow up, esc returns", execution: SlashCommandExecution::Client, argument_hint: Some("<question>"), aliases: &["side"], takes_argument: true },
-    BuiltinSlashCommand { name: "name", description: "Set or show the session display name", execution: SlashCommandExecution::Client, argument_hint: Some("[name]"), aliases: &["rename"], takes_argument: true },
+    BuiltinSlashCommand { name: "name", description: "Set the session display name, or generate one with the title model", execution: SlashCommandExecution::Client, argument_hint: Some("[name]"), aliases: &["rename"], takes_argument: true },
     BuiltinSlashCommand { name: "session", description: "Show session info", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
     // Fork-only client command. Upstream has no equivalent; it stays out of session admission.
     BuiltinSlashCommand { name: "id", description: "Copy the current session id to clipboard", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
@@ -68,7 +68,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand { name: "context", description: "Show token, cost, and context usage for agent and sub-agents", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &["usage"], takes_argument: false },
     BuiltinSlashCommand { name: "changelog", description: "Show changelog entries", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
     BuiltinSlashCommand { name: "update", description: "Update to the latest Rust build (uninstalls the TypeScript version; sessions preserved)", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
-    BuiltinSlashCommand { name: "nightly", description: "Switch Prime Agent updates to the nightly channel (unreleased builds, may be broken)", execution: SlashCommandExecution::Client, argument_hint: Some("[on|off|status]"), aliases: &[], takes_argument: true },
+    BuiltinSlashCommand { name: "nightly", description: "Switch Prime Env updates to the nightly channel (unreleased builds, may be broken)", execution: SlashCommandExecution::Client, argument_hint: Some("[on|off|status]"), aliases: &[], takes_argument: true },
     BuiltinSlashCommand { name: "hotkeys", description: "Show all keyboard shortcuts", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
     BuiltinSlashCommand { name: "fork", description: "Create a new fork from a previous user message", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
     BuiltinSlashCommand { name: "clone", description: "Duplicate the current session at the current position", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
@@ -88,7 +88,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand { name: "resume", description: "Open the agents view, or resume a session by id or path", execution: SlashCommandExecution::Client, argument_hint: Some("[id|path]"), aliases: &[], takes_argument: true },
     BuiltinSlashCommand { name: "reload", description: "Reload keybindings, skills, prompts, and themes", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
     BuiltinSlashCommand { name: "speed", description: "Toggle footer readout of model output tok/sec (latest response and session average)", execution: SlashCommandExecution::Client, argument_hint: Some("[on|off]"), aliases: &[], takes_argument: true },
-    BuiltinSlashCommand { name: "quit", description: "Quit Prime Agent", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
+    BuiltinSlashCommand { name: "quit", description: "Quit Prime Env", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
 ];
 
 /// The registry with alias resolution maps prebuilt.

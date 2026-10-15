@@ -68,7 +68,7 @@ pub fn is_update_restarting_rejection(error: &anyhow::Error) -> bool {
 }
 
 /// Whether an error is a response/handshake timeout ("Timed out after
-/// Nms waiting for the Prime Agent daemon (response|handshake)"): a
+/// Nms waiting for the Prime Env daemon (response|handshake)"): a
 /// transient under-load failure, not a protocol error — the caller
 /// degrades (retry or surface the queued state) instead of exiting.
 #[must_use]
@@ -99,7 +99,7 @@ pub fn is_daemon_unreachable(error: &anyhow::Error) -> bool {
         || error.chain().any(|cause| {
             let cause = cause.to_string().to_lowercase();
             cause.contains("daemon connection")
-                || cause.contains("prime agent daemon closed")
+                || cause.contains("prime env daemon closed")
                 || cause.contains("direct session connection closed")
                 || cause.contains("the session connection closed")
         })

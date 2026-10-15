@@ -255,6 +255,7 @@ fn view_options(socket: &std::path::Path) -> AgentsViewOptions {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     }
 }
 

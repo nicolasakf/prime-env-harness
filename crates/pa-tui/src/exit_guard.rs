@@ -308,7 +308,7 @@ fn spawn_watchdog(state: &Arc<GuardState>) {
 /// deliberate, not a crash).
 fn force_quit() -> ! {
     crate::exit_restore::restore_terminal();
-    eprintln!("Prime Agent: shutdown stalled; forced exit.");
+    eprintln!("Prime Env: shutdown stalled; forced exit.");
     std::process::exit(0)
 }
 

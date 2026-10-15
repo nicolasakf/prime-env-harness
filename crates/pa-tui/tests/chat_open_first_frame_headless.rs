@@ -359,7 +359,7 @@ fn a_direct_open_into_content_never_renders_the_splash() {
         "the pinned title row rides the first content frame:\n{first}"
     );
     assert!(
-        frames.iter().all(|frame| !frame.contains("prime agent")),
+        frames.iter().all(|frame| !frame.contains("prime env")),
         "the brand splash never renders for a direct open into content:\n{}",
         frames.join("\n---frame---\n")
     );
@@ -373,7 +373,7 @@ fn an_empty_open_keeps_the_brand_splash() {
     let frames = run_open(&OpeningTranscript::Empty);
     assert!(!frames.is_empty(), "frames were captured");
     assert!(
-        frames.iter().any(|frame| frame.contains("prime agent")),
+        frames.iter().any(|frame| frame.contains("prime env")),
         "the empty chat renders its header splash:\n{}",
         frames.join("\n---frame---\n")
     );

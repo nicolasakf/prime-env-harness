@@ -472,7 +472,7 @@ fn a_turn_settling_with_the_shutdown_does_not_stall_the_recovery() {
     // TS #2458's waiting row: the announced closing armed the bounded
     // shutdown recovery (not the hiccup loop).
     assert!(
-        all.contains("the Prime Agent daemon shut down; waiting for it to come back"),
+        all.contains("the Prime Env daemon shut down; waiting for it to come back"),
         "the shutdown recovery armed at the notice:\n{all}"
     );
     // The recovered window reports the restart version-honestly.
@@ -506,7 +506,7 @@ fn a_turn_settling_with_the_shutdown_does_not_stall_the_recovery() {
     );
     // The saved-transcript close never fired: the pane recovered.
     assert!(
-        !all.contains("The Prime Agent daemon shut down while this window was attached"),
+        !all.contains("The Prime Env daemon shut down while this window was attached"),
         "the expiry row must not appear when the daemon came back:\n{all}"
     );
 }

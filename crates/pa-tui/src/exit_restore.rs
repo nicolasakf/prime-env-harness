@@ -163,7 +163,7 @@ fn report_cooked_repair() -> std::io::Result<()> {
         use std::io::Write;
         writeln!(
             std::io::stderr(),
-            "Prime Agent: repaired a raw terminal left by a previous run."
+            "Prime Env: repaired a raw terminal left by a previous run."
         )
     } else {
         Ok(())

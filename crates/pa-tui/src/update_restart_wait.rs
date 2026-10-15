@@ -30,7 +30,7 @@ pub(crate) const DAEMON_UPDATE_RESTART_OPEN_RETRY_MS: u64 = 500;
 /// The notice a waited-through open surfaces (TS `updateRestartWaitNotice`):
 /// the session startup warning row and the agents-view status line.
 pub(crate) const DAEMON_UPDATE_RESTART_WAIT_NOTICE: &str =
-    "Waited for the Prime Agent daemon update restart to finish before opening this agent";
+    "Waited for the Prime Env daemon update restart to finish before opening this agent";
 
 /// True when an open failure is part of the normal update-restart window
 /// rather than a permanent failure (TS `isDaemonUpdateRestartTransientError`):
@@ -68,10 +68,10 @@ pub(crate) fn is_update_restart_transient_error(error: &anyhow::Error) -> bool {
         // until the successor listens, and the connect/handshake/response
         // requests time out in between.
         let text = cause.to_string();
-        text.starts_with("Connection to the Prime Agent daemon closed")
+        text.starts_with("Connection to the Prime Env daemon closed")
             || text.starts_with("the daemon connection closed")
             || text.starts_with("the daemon connection is closed")
-            || text.starts_with("Failed to connect to the Prime Agent daemon")
+            || text.starts_with("Failed to connect to the Prime Env daemon")
             || is_daemon_transport_timeout(&text)
     })
 }
@@ -84,13 +84,13 @@ pub(crate) fn is_update_restart_deadline_error(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         cause
             .to_string()
-            .starts_with("The Prime Agent daemon did not finish its update restart within")
+            .starts_with("The Prime Env daemon did not finish its update restart within")
     })
 }
 
 /// The TS timeout shapes: `Timed out after <n>ms connecting to the Prime
-/// Agent daemon`, `... waiting for the Prime Agent daemon handshake`, and
-/// `... waiting for the Prime Agent daemon response` (TS matches
+/// Agent daemon`, `... waiting for the Prime Env daemon handshake`, and
+/// `... waiting for the Prime Env daemon response` (TS matches
 /// `response to`; the client's own rendered form is the same prefix).
 /// Case-insensitive: the hello/connect paths capitalize `Timed`, the
 /// session's own bounded requests say `timed out after ...`.
@@ -105,9 +105,9 @@ fn is_daemon_transport_timeout(text: &str) -> bool {
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return false;
     }
-    tail.starts_with("connecting to the prime agent daemon")
-        || tail.starts_with("waiting for the prime agent daemon handshake")
-        || tail.starts_with("waiting for the prime agent daemon response")
+    tail.starts_with("connecting to the prime env daemon")
+        || tail.starts_with("waiting for the prime env daemon handshake")
+        || tail.starts_with("waiting for the prime env daemon response")
 }
 
 /// TS `daemonUpdateRestartDeadlineError`: the bounded wait's failure —
@@ -121,7 +121,7 @@ fn update_restart_deadline_error(
         None => "none yet".to_string(),
     };
     anyhow!(
-        "The Prime Agent daemon did not finish its update restart within {} seconds. Try opening this agent again once the update finishes. Last error: {}",
+        "The Prime Env daemon did not finish its update restart within {} seconds. Try opening this agent again once the update finishes. Last error: {}",
         wait_ms / 1000,
         last
     )
@@ -313,11 +313,11 @@ mod tests {
             // Transport failures while the daemon exits and boots.
             (
                 "connect refused",
-                anyhow!("Failed to connect to the Prime Agent daemon. Socket: /s."),
+                anyhow!("Failed to connect to the Prime Env daemon. Socket: /s."),
             ),
             (
                 "closed",
-                anyhow!("Connection to the Prime Agent daemon closed. Socket: /s."),
+                anyhow!("Connection to the Prime Env daemon closed. Socket: /s."),
             ),
             // The transport's own failure shapes when the daemon exits
             // mid-request (the pending-fail resolution, the dead writer,
@@ -336,15 +336,15 @@ mod tests {
             ),
             (
                 "response timeout",
-                anyhow!("Timed out after 30000ms waiting for the Prime Agent daemon response. Socket: /s."),
+                anyhow!("Timed out after 30000ms waiting for the Prime Env daemon response. Socket: /s."),
             ),
             (
                 "connect timeout",
-                anyhow!("Timed out after 5000ms connecting to the Prime Agent daemon. Socket: /s."),
+                anyhow!("Timed out after 5000ms connecting to the Prime Env daemon. Socket: /s."),
             ),
             (
                 "handshake timeout",
-                anyhow!("Timed out after 5000ms waiting for the Prime Agent daemon handshake. Socket: /s."),
+                anyhow!("Timed out after 5000ms waiting for the Prime Env daemon handshake. Socket: /s."),
             ),
             // Session-not-restored-yet misses.
             (
@@ -428,7 +428,7 @@ mod tests {
         assert!(
             deadline_error
                 .to_string()
-                .starts_with("The Prime Agent daemon did not finish its update restart within"),
+                .starts_with("The Prime Env daemon did not finish its update restart within"),
             "the deadline error is actionable: {deadline_error}"
         );
         assert!(
@@ -462,11 +462,11 @@ mod tests {
     #[test]
     fn the_transport_timeout_shapes_classify_exactly() {
         for text in [
-            "Timed out after 5000ms connecting to the Prime Agent daemon. Socket: /s.",
-            "Timed out after 5000ms waiting for the Prime Agent daemon handshake. Socket: /s.",
-            "Timed out after 30000ms waiting for the Prime Agent daemon response. Socket: /s.",
-            "Timed out after 30000ms waiting for the Prime Agent daemon response to \"create\".",
-            "timed out after 30000ms waiting for the Prime Agent daemon response",
+            "Timed out after 5000ms connecting to the Prime Env daemon. Socket: /s.",
+            "Timed out after 5000ms waiting for the Prime Env daemon handshake. Socket: /s.",
+            "Timed out after 30000ms waiting for the Prime Env daemon response. Socket: /s.",
+            "Timed out after 30000ms waiting for the Prime Env daemon response to \"create\".",
+            "timed out after 30000ms waiting for the Prime Env daemon response",
         ] {
             assert!(is_daemon_transport_timeout(text), "{text}");
             assert!(
@@ -482,7 +482,7 @@ mod tests {
             "Timed out after ms connecting"
         ));
         assert!(!is_daemon_transport_timeout(
-            "Timed out after 5x00ms connecting to the Prime Agent daemon"
+            "Timed out after 5x00ms connecting to the Prime Env daemon"
         ));
     }
 
@@ -495,7 +495,7 @@ mod tests {
         assert!(
             deadline
                 .to_string()
-                .starts_with("The Prime Agent daemon did not finish its update restart within"),
+                .starts_with("The Prime Env daemon did not finish its update restart within"),
             "{deadline}"
         );
         assert!(deadline.to_string().contains("Last error:"));
@@ -512,7 +512,7 @@ mod tests {
         assert_eq!(DAEMON_UPDATE_RESTART_OPEN_WAIT_MS, 240_000);
         assert_eq!(
             DAEMON_UPDATE_RESTART_WAIT_NOTICE,
-            "Waited for the Prime Agent daemon update restart to finish before opening this agent"
+            "Waited for the Prime Env daemon update restart to finish before opening this agent"
         );
         assert_eq!(
             pa_types::daemon::UPDATE_RESTART_PREPARING_MESSAGE,

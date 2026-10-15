@@ -879,7 +879,7 @@ impl SessionUi {
             .await
             .map_err(|_| {
                 anyhow!(
-                    "timed out after {UI_REQUEST_TIMEOUT_MS}ms waiting for the Prime Agent daemon response"
+                    "timed out after {UI_REQUEST_TIMEOUT_MS}ms waiting for the Prime Env daemon response"
                 )
             })
             .and_then(std::convert::identity);

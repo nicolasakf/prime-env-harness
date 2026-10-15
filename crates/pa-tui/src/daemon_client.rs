@@ -48,7 +48,7 @@ const CONNECT_TIMEOUT_MS: u64 = 3_000;
 const HELLO_TIMEOUT_MS: u64 = 15_000;
 /// Connect attempts before a connect/handshake failure surfaces (the
 /// fatal error paths the operator hit: "Timed out after 15000ms waiting
-/// for the Prime Agent daemon handshake" exited their TUI on the FIRST
+/// for the Prime Env daemon handshake" exited their TUI on the FIRST
 /// miss at box load). A loaded or restarting daemon usually greets within
 /// the retry window; the caller's error path only runs after the last
 /// attempt.
@@ -358,13 +358,13 @@ impl DaemonClient {
         .await
         .map_err(|_| {
             anyhow!(
-                "Timed out after {CONNECT_TIMEOUT_MS}ms connecting to the Prime Agent daemon. Socket: {}.",
+                "Timed out after {CONNECT_TIMEOUT_MS}ms connecting to the Prime Env daemon. Socket: {}.",
                 socket_path.display()
             )
         })?
         .with_context(|| {
             format!(
-                "Failed to connect to the Prime Agent daemon. Socket: {}.",
+                "Failed to connect to the Prime Env daemon. Socket: {}.",
                 socket_path.display()
             )
         })?;
@@ -454,7 +454,7 @@ impl DaemonClient {
             .map_err(|_| {
                 reader_task.abort();
                 anyhow!(
-                    "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Agent daemon handshake. Socket: {}.",
+                    "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Env daemon handshake. Socket: {}.",
                     socket_path.display()
                 )
             })?
@@ -521,7 +521,7 @@ impl DaemonClient {
     /// missed hello (a loaded daemon mid-fanout, a supervisor coming up
     /// after a restart) is a hiccup, not a fatal condition — the one-shot
     /// connect cost the operator their TUI twice on 2026-09-24 ("Timed
-    /// out after 15000ms waiting for the Prime Agent daemon handshake").
+    /// out after 15000ms waiting for the Prime Env daemon handshake").
     /// The caller's error path (fatal exit or view fallback) only runs
     /// after the last attempt.
     ///
@@ -735,13 +735,13 @@ impl DaemonClient {
             // The reader task died before resolving this request: the
             // connection was already gone.
             Ok(Err(_)) => Err(anyhow!(
-                "Connection to the Prime Agent daemon closed. Socket: {}.",
+                "Connection to the Prime Env daemon closed. Socket: {}.",
                 self.socket_path.display()
             )),
             Err(_) => {
                 self.shared.pending.lock().unwrap().remove(&id);
                 Err(anyhow!(
-                    "Timed out after {timeout_ms}ms waiting for the Prime Agent daemon response. Socket: {}.",
+                    "Timed out after {timeout_ms}ms waiting for the Prime Env daemon response. Socket: {}.",
                     self.socket_path.display()
                 ))
             }

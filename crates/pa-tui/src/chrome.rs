@@ -21,6 +21,18 @@ pub const PRIME_COMPACT_BUTTERFLY_LOGO: &str = concat!(
     "\u{259c}\u{2588}\u{259b}\u{2580}\u{2598}  \u{259c}\u{2588}\u{259b}\u{2580}\u{2598}",
 );
 
+/// Theme tone for each logo row, top to bottom: a sky-to-violet-to-amber
+/// gradient built from theme tokens so every theme recolors it.
+pub(crate) const LOGO_ROW_TONES: [ThemeColor; 7] = [
+    ThemeColor::MdLink,
+    ThemeColor::MdLink,
+    ThemeColor::Accent,
+    ThemeColor::Accent,
+    ThemeColor::Warning,
+    ThemeColor::Warning,
+    ThemeColor::Warning,
+];
+
 /// Truncate a plain string to a visible width (TS `truncateToWidth` for
 /// plain strings: cut on grapheme boundaries, appending the ellipsis).
 fn truncate_to_width(value: &str, max_width: usize, ellipsis: &str) -> String {
@@ -43,7 +55,7 @@ fn truncate_to_width(value: &str, max_width: usize, ellipsis: &str) -> String {
 /// Where a session runs; drives labels that depend on persistence.
 #[derive(Debug, Clone, Default)]
 pub struct ChromeState {
-    /// Product version shown in the splash (`prime agent vX`).
+    /// Product version shown in the splash (`prime env vX`).
     pub version: String,
     /// Session working directory (splash `cwd` line; `~`-compressed).
     pub cwd: String,
@@ -365,7 +377,7 @@ pub fn render_splash(state: &ChromeState, theme: &Theme, width: usize) -> Vec<Li
     let text = theme.fg_style(ThemeColor::Text);
     let muted = theme.fg_style(ThemeColor::Muted);
     let dim = theme.fg_style(ThemeColor::Dim);
-    let title = "prime agent";
+    let title = "prime env";
     let version = format!("v{}", state.version);
     let mut meta_lines: Vec<Line> = Vec::new();
     if str_width(&format!("{title} {version}")) <= meta_width {
@@ -419,14 +431,14 @@ pub fn render_splash(state: &ChromeState, theme: &Theme, width: usize) -> Vec<Li
     } else {
         0
     };
-    let logo_text = theme.fg_style(ThemeColor::Text);
     for index in 0..row_count {
         let mut spans: Line = Vec::new();
         let pad = if padding_x > 0 { " " } else { "" };
         spans.push(Span::styled(pad.to_string(), Style::default()));
         if show_logo {
             let logo_line = logo_raw.get(index).copied().unwrap_or("");
-            spans.push(Span::styled(logo_line.to_string(), logo_text));
+            let tone = LOGO_ROW_TONES[index.min(LOGO_ROW_TONES.len() - 1)];
+            spans.push(Span::styled(logo_line.to_string(), theme.fg_style(tone)));
             let fill = logo_canvas_width.saturating_sub(str_width(logo_line)) + gutter;
             spans.push(Span::styled(" ".repeat(fill), Style::default()));
         }

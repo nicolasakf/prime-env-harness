@@ -855,7 +855,7 @@ impl CombinedAutocompleteProvider {
             self.commands.push(SlashCommandEntry {
                 name: "tutorial".into(),
                 aliases: Vec::new(),
-                description: Some("Getting started with Prime Environment Harness".into()),
+                description: Some("Getting started with Prime Env".into()),
                 argument_hint: None,
                 takes_argument: false,
                 source_tag: None,

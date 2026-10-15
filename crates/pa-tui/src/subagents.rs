@@ -412,6 +412,7 @@ mod tests {
             &std::collections::HashSet::new(),
             &rollups,
             None,
+            &std::collections::HashSet::new(),
         );
         let row = rows
             .iter()

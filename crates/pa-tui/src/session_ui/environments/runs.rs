@@ -72,7 +72,7 @@ impl SessionUi {
                 Ok(Ok(data)) => serde_json::from_value(data["runs"].clone())
                     .map_err(|error| format!("{error:#}")),
                 Ok(Err(error)) => Err(format!("{error:#}")),
-                Err(_) => Err("timed out waiting for the Prime Agent daemon response".to_owned()),
+                Err(_) => Err("timed out waiting for the Prime Env daemon response".to_owned()),
             };
             let _ = updates.send(EnvironmentRunsUpdate { runs });
         });
