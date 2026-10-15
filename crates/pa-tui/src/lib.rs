@@ -1,4 +1,4 @@
-//! Terminal UI for Prime Agent.
+//! Terminal UI for Prime Env.
 //!
 //! Rust port of the TS reference TUI (packages/tui) plus the interactive agent view
 //! from `coding-agent/src/modes/interactive`. Components render styled lines;
@@ -28,6 +28,7 @@
 #![allow(clippy::unnecessary_wraps)]
 
 pub mod agents_view;
+mod agents_view_environments;
 pub mod agents_view_forest;
 pub mod agents_view_search;
 pub mod agents_view_state;
