@@ -261,6 +261,13 @@ impl SessionUi {
             // manager (`getDefaultServiceTier`): the tier row preselects
             // the saved value instead of the struct default.
             values.default_service_tier = settings.default_service_tier();
+            values.title_model = settings.title_model();
+            values.tool_call_preview = match settings.tool_call_preview().as_str() {
+                "description" => crate::settings_menu::TOOL_CALL_PREVIEW_DESCRIPTION,
+                _ => crate::settings_menu::TOOL_CALL_PREVIEW_CODE,
+            }
+            .to_string();
+            values.tool_call_description_max_chars = settings.tool_call_description_max_chars();
         } else {
             values.show_images = true;
             values.auto_resize_images = true;
@@ -274,7 +281,25 @@ impl SessionUi {
             // No settings seam: the tier row reads the TS default tier
             // (getDefaultServiceTier's "default"), never a blank value.
             values.default_service_tier = "default".to_string();
+            values.tool_call_preview = crate::settings_menu::TOOL_CALL_PREVIEW_CODE.to_string();
         }
+        // The title-model submenu lists the cached catalog's models with
+        // configured auth, plus the configured one when it dropped out of
+        // the catalog; an empty catalog starts the refresh the next open
+        // will find landed.
+        if self.model_catalog.is_empty() {
+            self.spawn_model_catalog_refresh();
+        }
+        let mut title_models: Vec<String> = self
+            .model_catalog
+            .iter()
+            .filter(|model| self.model_configured_providers.contains(&model.provider))
+            .map(|model| format!("{}/{}", model.provider, model.id))
+            .collect();
+        title_models.extend(values.title_model.clone());
+        title_models.sort();
+        title_models.dedup();
+        values.available_title_models = title_models;
         // The registered themes (TS `getAvailableThemes`; this surface
         // ships the builtins).
         values.available_themes = pa_types::themes::BUILTIN_THEME_NAMES
@@ -321,6 +346,34 @@ impl SessionUi {
             }
             crate::settings_menu::SettingsMenuAction::Change { id, value } => {
                 self.apply_settings_change(id, &value, view).await;
+            }
+            // An action row (TS `SettingItem.action`): the menu stays open.
+            crate::settings_menu::SettingsMenuAction::Activate { id } => {
+                // "Open settings.json" is the one action row.
+                if id == "open-settings-file" {
+                    let path = self
+                        .client_settings
+                        .clone()
+                        .ok_or_else(|| "settings are unavailable".to_string())
+                        .and_then(|settings| {
+                            settings.ensure_global_settings_file().map_err(|error| {
+                                format!("Failed to create settings.json: {error:#}")
+                            })
+                        });
+                    match path {
+                        Ok(path) => {
+                            if let Err(error) =
+                                crate::browser::open_with_default_app(&path.to_string_lossy())
+                            {
+                                self.error_row(
+                                    &format!("Failed to open settings.json: {error}"),
+                                    view,
+                                );
+                            }
+                        }
+                        Err(message) => self.error_row(&message, view),
+                    }
+                }
             }
         }
         self.dirty = true;
@@ -565,6 +618,34 @@ impl SessionUi {
                 );
             }
 
+            "title-model" => {
+                if let Some(settings) = &self.client_settings {
+                    let model = (value != crate::settings_menu::TITLE_MODEL_NONE).then_some(value);
+                    if let Err(error) = settings.set_title_model(model) {
+                        self.error_row(&format!("{error:#}"), view);
+                    }
+                }
+            }
+            "tool-call-preview" => {
+                if let Some(settings) = &self.client_settings {
+                    let mode = if value == crate::settings_menu::TOOL_CALL_PREVIEW_DESCRIPTION {
+                        "description"
+                    } else {
+                        "code"
+                    };
+                    if let Err(error) = settings.set_tool_call_preview(mode) {
+                        self.error_row(&format!("{error:#}"), view);
+                    }
+                }
+            }
+            "tool-call-description-max-chars" => {
+                if let Some(settings) = &self.client_settings {
+                    let limit = value.parse::<u64>().ok();
+                    if let Err(error) = settings.set_tool_call_description_max_chars(limit) {
+                        self.error_row(&format!("{error:#}"), view);
+                    }
+                }
+            }
             "mermaid-rendering" => {
                 if let Some(settings) = &self.client_settings {
                     if let Err(error) = settings.set_mermaid_rendering_mode(value) {

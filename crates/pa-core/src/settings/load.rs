@@ -12,6 +12,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "onboardingCompleted",
     "defaultProvider",
     "defaultModel",
+    "titleModel",
     "subagentDefaultModel",
     "updateChannel",
     "recentModels",
@@ -51,6 +52,8 @@ const KNOWN_FIELDS: &[&str] = &[
     "allowedModels",
     "treeFilterMode",
     "chatDetail",
+    "toolCallPreview",
+    "toolCallDescriptionMaxChars",
     "thinkingBudgets",
     "editorPaddingX",
     "autocompleteMaxVisible",
@@ -58,6 +61,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "markdown",
     "warnings",
     "sessionDir",
+    "pinnedSessionIds",
     "requestTiming",
 ];
 

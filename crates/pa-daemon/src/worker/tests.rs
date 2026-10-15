@@ -51,4 +51,5 @@ mod goal_tests;
 mod kill_broadcast_tests;
 mod queue_tests;
 mod summary_tests;
+mod title_tests;
 mod warning_marker_tests;

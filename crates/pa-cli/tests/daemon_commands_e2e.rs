@@ -674,12 +674,12 @@ fn cli_connect_error_matches_ts_golden() {
         ],
     );
     assert_eq!(output.status.code(), Some(1));
-    // Golden (TS): `Error: Failed to connect to the Prime Agent daemon:
+    // Golden (TS): `Error: Failed to connect to the Prime Env daemon:
     // connect ENOENT <path>. Socket: <path>. Daemon log:
     // <agent-dir>/logs/<socket-basename>.<8-hex>.log.`
     let text = stderr(&output).trim_end().to_string();
     let expected_prefix = format!(
-        "Error: Failed to connect to the Prime Agent daemon: connect ENOENT {missing}. Socket: {missing}. Daemon log: ",
+        "Error: Failed to connect to the Prime Env daemon: connect ENOENT {missing}. Socket: {missing}. Daemon log: ",
         missing = missing.display()
     );
     assert!(
@@ -779,7 +779,7 @@ fn schedule_usage_errors_and_valid_invocations() {
         assert_eq!(out.status.code(), Some(1), "{args:?}");
         let err = stderr(&out);
         assert!(
-            err.starts_with("Error: Failed to connect to the Prime Agent daemon:"),
+            err.starts_with("Error: Failed to connect to the Prime Env daemon:"),
             "{args:?}: {err}"
         );
     }

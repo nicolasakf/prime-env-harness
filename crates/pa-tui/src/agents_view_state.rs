@@ -7,8 +7,10 @@
 use std::collections::HashMap;
 
 use pa_types::daemon::agent_roster::AgentRosterStatus;
+use pa_types::environments::InstanceRun;
 use serde_json::Value;
 
+use crate::agents_view_environments::EnvironmentTally;
 use crate::agents_view_forest::session_title;
 use crate::agents_view_search::score_search;
 use crate::width::str_width;
@@ -28,6 +30,32 @@ pub fn section_title(section: Section) -> &'static str {
         Section::Running => "Running",
         Section::Idle => "Idle",
         Section::Inactive => "Inactive",
+    }
+}
+
+/// One block of the sectioned list: the pinned block above the status
+/// sections. A pinned agent lists under `Pinned` whatever its status; its
+/// row keeps the status icon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplaySection {
+    Pinned,
+    Status(Section),
+}
+
+/// The list's blocks, top to bottom.
+pub const DISPLAY_SECTIONS: [DisplaySection; 4] = [
+    DisplaySection::Pinned,
+    DisplaySection::Status(Section::Running),
+    DisplaySection::Status(Section::Idle),
+    DisplaySection::Status(Section::Inactive),
+];
+
+/// The display heading of a list block.
+#[must_use]
+pub fn display_section_title(section: DisplaySection) -> &'static str {
+    match section {
+        DisplaySection::Pinned => "Pinned",
+        DisplaySection::Status(status) => section_title(status),
     }
 }
 
@@ -120,15 +148,38 @@ fn saved_aliases(saved: &Value) -> Vec<String> {
     aliases
 }
 
-/// The SESSION column's width cap (TS `buildCompactAgentsViewLayout`'s
-/// `Math.min(28, ...)`, which `build_layout` mirrors): the widest the
-/// name column ever renders.
-const SESSION_NAME_COLUMN_MAX_CELLS: usize = 28;
+/// The widest the SESSION column ever asks for. The column grows to fit
+/// the longest title up to this cap; it gets the width first and the
+/// secondary columns share what is left.
+const SESSION_NAME_COLUMN_MAX_CELLS: usize = 80;
 
 /// The widest title the SESSION column renders: the column cap minus the
 /// two cells every agent row spends on its icon and gap (nested rows
 /// render strictly less).
 const SESSION_TITLE_MAX_CELLS: usize = SESSION_NAME_COLUMN_MAX_CELLS - 2;
+
+/// The widest the MODEL column asks for.
+const MODEL_COLUMN_MAX_CELLS: usize = 32;
+
+/// The widest the ENVIRONMENTS column asks for (`99 running, 99 paused,
+/// 99 stalled` and a little slack).
+const ENVIRONMENTS_COLUMN_MAX_CELLS: usize = 34;
+
+/// The gap between two columns.
+const COLUMN_GAP: usize = 2;
+
+/// The least a secondary column is worth rendering at: a narrower slot
+/// drops the column (and its gap) instead of printing a sliver, unless
+/// the column's whole content fits.
+const SECONDARY_COLUMN_MIN_CELLS: usize = 8;
+
+/// The cells the SESSION column leaves the secondary columns however long
+/// its titles are, so a pane of long first-message titles still shows a
+/// readable model and environments cell.
+const SECONDARY_RESERVE_CELLS: usize = 24;
+
+/// The least the SESSION column keeps on a pane too narrow for the rest.
+const SESSION_MIN_CELLS: usize = 12;
 
 /// The picker's name target: the SESSION column's own title — the same
 /// `session_title` ladder over the same merged summary the row renders —
@@ -583,11 +634,31 @@ pub fn relative_age(value: Option<&str>, now_ms: u64) -> String {
 }
 
 /// The column layout of the list (TS `buildCompactAgentsViewLayout`).
+/// Columns left to right: SESSION, MODEL, ENVIRONMENTS, then the cost/age
+/// details. A secondary column too narrow to read has width 0 and is not
+/// rendered.
 pub struct RowLayout {
     pub legend: String,
     pub name_width: usize,
     pub model_width: usize,
+    pub(crate) environments_width: usize,
     pub details: HashMap<String, String>,
+    pub(crate) environments: HashMap<String, EnvironmentTally>,
+}
+
+impl RowLayout {
+    /// The cells from the SESSION column through the last secondary column,
+    /// gaps included: the zone a subagent summary line spans before its
+    /// cost cell.
+    #[must_use]
+    pub fn leading_zone_width(&self) -> usize {
+        let secondary = [self.model_width, self.environments_width]
+            .into_iter()
+            .filter(|width| *width > 0)
+            .map(|width| COLUMN_GAP + width)
+            .sum::<usize>();
+        self.name_width + secondary
+    }
 }
 
 fn table_cell(value: &str, width: usize) -> String {
@@ -626,14 +697,28 @@ fn pad_start(value: &str, width: usize) -> String {
     )
 }
 
-/// Compute the compact column layout for the rows at `width`.
+/// Compute the compact column layout for the rows at `width`. The SESSION
+/// column is sized first, to its longest title; MODEL and ENVIRONMENTS
+/// split the rest, each shrinking (and finally dropping) before the
+/// session name does.
 #[must_use]
-pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: usize) -> RowLayout {
+pub fn build_layout(
+    rows: &[crate::agents_view_forest::AgentsViewRow],
+    runs: &[InstanceRun],
+    width: usize,
+) -> RowLayout {
+    use crate::agents_view_forest::RowKind;
     // TS `buildCompactAgentsViewLayout` (:3078) excludes the program's
     // code rows: they contribute no columns and read no detail cell.
     let rows: Vec<_> = rows
         .iter()
-        .filter(|row| row.kind != crate::agents_view_forest::RowKind::Code)
+        .filter(|row| row.kind != RowKind::Code)
+        .collect();
+    // A subagent summary line spans the leading columns, so its text
+    // sizes none of them.
+    let session_rows: Vec<_> = rows
+        .iter()
+        .filter(|row| row.kind != RowKind::SubagentSummary)
         .collect();
     let cost_width = rows
         .iter()
@@ -647,16 +732,67 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
         .max()
         .unwrap_or(0)
         .max(3);
-    let details_width = cost_width + 2 + age_width;
-    let available = width.saturating_sub(details_width + 4);
+    let details_width = cost_width + COLUMN_GAP + age_width;
+    let environments: HashMap<String, EnvironmentTally> = rows
+        .iter()
+        .map(|row| {
+            let tally = row
+                .summary
+                .get("activeSessionId")
+                .and_then(Value::as_str)
+                .map_or_else(EnvironmentTally::default, |builder| {
+                    EnvironmentTally::for_builder(runs, builder)
+                });
+            (row.identity.clone(), tally)
+        })
+        .collect();
+
+    let desired_session = session_rows
+        .iter()
+        .map(|row| 2 * row.depth + 2 + str_width(&row.title))
+        .max()
+        .unwrap_or(0)
+        .max(str_width("Session"))
+        .min(SESSION_NAME_COLUMN_MAX_CELLS);
     let desired_model = rows
         .iter()
         .map(|row| str_width(&row.model))
         .max()
         .unwrap_or(0)
-        .max(12);
-    let model_width = desired_model.min(32).min(available.saturating_sub(12));
-    let name_width = (available.saturating_sub(model_width)).min(SESSION_NAME_COLUMN_MAX_CELLS);
+        .max(str_width("Model"))
+        .min(MODEL_COLUMN_MAX_CELLS);
+    let desired_environments = session_rows
+        .iter()
+        .filter_map(|row| environments.get(&row.identity))
+        .map(|tally| str_width(&tally.text()))
+        .max()
+        .unwrap_or(0)
+        .max(str_width("Environments"))
+        .min(ENVIRONMENTS_COLUMN_MAX_CELLS);
+
+    // Everything left of the details, minus the gap before them.
+    let budget = width.saturating_sub(details_width + COLUMN_GAP);
+    let reserve =
+        (desired_model + desired_environments + 2 * COLUMN_GAP).min(SECONDARY_RESERVE_CELLS);
+    let name_width = desired_session
+        .min(budget.saturating_sub(reserve).max(SESSION_MIN_CELLS))
+        .min(budget);
+    let mut leftover = budget - name_width;
+    // The secondary columns claim what the session name left, in priority
+    // order: a column that cannot get a readable slot is dropped.
+    let mut claim = |desired: usize| {
+        let width = desired.min(leftover.saturating_sub(COLUMN_GAP));
+        if width < SECONDARY_COLUMN_MIN_CELLS.min(desired) {
+            return 0;
+        }
+        leftover -= width + COLUMN_GAP;
+        width
+    };
+    let environments_width = claim(desired_environments);
+    let model_width = claim(desired_model);
+    // Cells no secondary column claimed go back to the session name.
+    let name_width = (name_width + leftover).min(desired_session);
+
     let detail_line = |cost: &str, age: &str| {
         format!(
             "{}  {}",
@@ -664,10 +800,13 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
             pad_start(age, age_width)
         )
     };
-    let mut headings = vec![
-        table_cell("Session", name_width),
-        table_cell("Model", model_width),
-    ];
+    let mut headings = vec![table_cell("Session", name_width)];
+    if model_width > 0 {
+        headings.push(table_cell("Model", model_width));
+    }
+    if environments_width > 0 {
+        headings.push(table_cell("Environments", environments_width));
+    }
     headings.push(detail_line("Cost", "Age"));
     let details = rows
         .iter()
@@ -682,7 +821,9 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
         legend: table_cell(&headings.join("  "), width),
         name_width,
         model_width,
+        environments_width,
         details,
+        environments,
     }
 }
 
@@ -911,6 +1052,7 @@ mod tests {
             &std::collections::HashSet::default(),
             &std::collections::HashMap::default(),
             None,
+            &std::collections::HashSet::default(),
         );
         assert_eq!(rows[0].section, Section::Running);
         assert_eq!(rows[1].section, Section::Idle);
@@ -1109,8 +1251,9 @@ mod tests {
             &std::collections::HashSet::default(),
             &std::collections::HashMap::default(),
             None,
+            &std::collections::HashSet::default(),
         );
-        let layout = build_layout(&rows, 120);
+        let layout = build_layout(&rows, &[], 120);
         assert!(layout.legend.contains("Session"));
         assert!(layout.legend.contains("Model"));
         assert!(layout.legend.contains("Cost"));
@@ -1159,6 +1302,7 @@ mod tests {
             &std::collections::HashSet::default(),
             &std::collections::HashMap::default(),
             None,
+            &std::collections::HashSet::default(),
         );
         let age = rows
             .iter()
@@ -1215,7 +1359,8 @@ mod tests {
         // column's clip never matches (the TS corpus joined the whole
         // prompt and transcript, which flooded unrelated sessions).
         let prompt = format!(
-            "fix the agents view search{}",
+            "fix the agents view search{}{}",
+            " while we are here".repeat(5),
             " and then also check the queue lane backoff ceiling because CI is red".repeat(3)
         );
         let roster = vec![roster_entry(

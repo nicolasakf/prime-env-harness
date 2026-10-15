@@ -305,6 +305,12 @@ async fn run_agents_view_flow(
             // TS `AgentsViewModeOptions.config`: the flow's own create
             // config — the base a saved reply's resume derives from.
             create_config: base.create_config(),
+            // The pin key persists `pinnedSessionIds` through the same
+            // settings store the session view reads.
+            client_settings: base
+                .client_settings
+                .clone()
+                .map(pa_tui::agents_view::AgentsViewSettings),
         };
         let view_run = pa_tui::agents_view::run_agents_view(
             view_options,

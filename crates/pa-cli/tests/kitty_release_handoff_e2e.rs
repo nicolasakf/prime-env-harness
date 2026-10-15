@@ -118,6 +118,7 @@ fn kitty_child_mode() {
                 show_hardware_cursor: false,
                 incident_notice_state: None,
                 create_config: serde_json::json!({}),
+                client_settings: None,
             };
             let view_run = pa_tui::agents_view::run_agents_view(
                 view_options,

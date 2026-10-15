@@ -29,7 +29,12 @@ pub(super) const VIEW_COMMAND_NAMES: [&str; 2] = ["name", "kill"];
 /// labels): the view commands' own descriptions, `/name`'s argument
 /// hint, and its takes-argument.
 const VIEW_COMMAND_DESCRIPTIONS: [(&str, &str, Option<&str>, bool); 2] = [
-    ("name", "Set session display name", Some("<name>"), true),
+    (
+        "name",
+        "Set the session display name, or generate one with the title model",
+        Some("[name]"),
+        true,
+    ),
     (
         "kill",
         "Stop this agent's runtime (session stays resumable)",
@@ -560,12 +565,21 @@ impl AgentsViewMode {
     /// failure the draft restores.
     fn submit_name_command(&mut self, reply: &mut Box<ReplyComposer>, value: &str, args: &str) {
         let name = args.trim().to_string();
+        let current = self.current_reply_summary(&reply.target);
         if name.is_empty() {
-            self.set_status_tone("Usage: /name <session name>", StatusTone::Warning);
-            restore_reply_draft(reply, value);
+            // No name: a live session asks the daemon to generate one with
+            // the title model (an empty name marks the generate dispatch).
+            let Some(target @ RenameTarget::Live { .. }) = rename_target_from_summary(&current)
+            else {
+                self.set_status_tone("Usage: /name <session name>", StatusTone::Warning);
+                restore_reply_draft(reply, value);
+                return;
+            };
+            reply.in_flight = Some(value.to_string());
+            self.set_status("Generating session name...");
+            self.pending_rename = Some(Rename { target, name });
             return;
         }
-        let current = self.current_reply_summary(&reply.target);
         let Some(target) = rename_target_from_summary(&current) else {
             self.set_status_tone("This session cannot be renamed", StatusTone::Warning);
             restore_reply_draft(reply, value);

@@ -561,6 +561,7 @@ async fn golden_ipython_group_matches_ts() {
             } else {
                 None
             },
+            preview: ipython::IpythonPreview::Code,
         };
         let result =
             ipython::execute_ipython(&options, case["code"].as_str().expect("code"), None, None)
@@ -635,6 +636,7 @@ fn golden_schema_group_matches_ts() {
                         kill_calls: AtomicUsize::new(0),
                     }),
                     ui: None,
+                    preview: ipython::IpythonPreview::Code,
                 },
             ),
             other => panic!("unknown tool {other}"),

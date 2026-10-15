@@ -213,6 +213,7 @@ impl Worker {
             "shutdown" => self.handle_shutdown().await,
             "rename" => self.handle_rename("rename", payload),
             "set_session_name" => self.handle_rename("set_session_name", payload),
+            "generate_session_title" => self.handle_generate_session_title().await,
             "mark_anthropic_warning_shown" => self.handle_mark_anthropic_warning_shown(),
             "rename_saved_session" => self.handle_rename_saved_session(payload),
             "delete_saved_session" => self.handle_delete_saved_session(payload).await,
@@ -873,6 +874,8 @@ impl Worker {
         if name.trim().is_empty() {
             return response_failure(None, command, "Session name cannot be empty", None);
         }
+        // A name set by hand outranks an automatic title still generating.
+        self.titles.cancel();
         let mut core = self.core.lock().unwrap();
         if let Some(store) = core.store.as_mut() {
             if let Err(error) = store.persist_entry("session_info", json!({ "name": name })) {

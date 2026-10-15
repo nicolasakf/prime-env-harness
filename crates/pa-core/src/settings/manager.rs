@@ -9,7 +9,8 @@ use super::load::from_value_lenient;
 use super::merge::{deep_merge, migrate};
 use super::storage::{SettingsScope, SettingsStorage};
 use super::types::{
-    QueueModeSetting, Settings, ThinkingLevelSetting, TransportSetting, UpdateChannel,
+    QueueModeSetting, Settings, ThinkingLevelSetting, TitleModelSetting, TransportSetting,
+    UpdateChannel,
 };
 
 pub const RECENT_MODELS_LIMIT: usize = 20;
@@ -628,6 +629,52 @@ impl SettingsManager {
             .as_ref()
             .map(|m| m.trim().to_string())
             .filter(|m| !m.is_empty())
+    }
+
+    /// `titleModel`: the model that generates conversation titles; a
+    /// blank provider or id behaves as unset.
+    #[must_use]
+    pub fn get_title_model(&self) -> Option<TitleModelSetting> {
+        let setting = self.merged.title_model.as_ref()?;
+        let provider = setting.provider.trim();
+        let id = setting.id.trim();
+        (!provider.is_empty() && !id.is_empty()).then(|| TitleModelSetting {
+            provider: provider.to_string(),
+            id: id.to_string(),
+        })
+    }
+
+    /// `toolCallPreview`: `description` when the ipython tool asks the
+    /// model for a short description, otherwise `code`.
+    #[must_use]
+    pub fn get_tool_call_preview(&self) -> &'static str {
+        match self.merged.tool_call_preview.as_deref() {
+            Some("description") => "description",
+            _ => "code",
+        }
+    }
+
+    /// `toolCallDescriptionMaxChars`: the positive character limit for
+    /// description-mode tool calls; unset or zero means no limit.
+    #[must_use]
+    pub fn get_tool_call_description_max_chars(&self) -> Option<u64> {
+        self.merged
+            .tool_call_description_max_chars
+            .filter(|limit| *limit > 0)
+    }
+
+    /// Agents-view pins. Per-user, so only the global scope counts; blank
+    /// and duplicate ids drop out and the pin order is preserved.
+    #[must_use]
+    pub fn get_pinned_session_ids(&self) -> Vec<String> {
+        let mut pinned: Vec<String> = Vec::new();
+        for session_id in self.global.pinned_session_ids.iter().flatten() {
+            let session_id = session_id.trim();
+            if !session_id.is_empty() && !pinned.iter().any(|existing| existing == session_id) {
+                pinned.push(session_id.to_string());
+            }
+        }
+        pinned
     }
 
     #[must_use]
@@ -1275,5 +1322,79 @@ mod tests {
         assert_eq!(manager.get_image_model(), None);
         let manager = SettingsManager::in_memory(&Settings::default());
         assert_eq!(manager.get_image_model(), None);
+    }
+
+    #[test]
+    fn title_model_round_trips_and_clears() {
+        let mut manager = SettingsManager::in_memory(&Settings::default());
+        assert_eq!(manager.get_title_model(), None);
+        manager
+            .set_title_model(Some(TitleModelSetting {
+                provider: " prime-inference ".to_string(),
+                id: " small ".to_string(),
+            }))
+            .unwrap();
+        manager.reload().unwrap();
+        assert_eq!(
+            manager.get_title_model(),
+            Some(TitleModelSetting {
+                provider: "prime-inference".to_string(),
+                id: "small".to_string(),
+            })
+        );
+        manager.set_title_model(None).unwrap();
+        manager.reload().unwrap();
+        assert_eq!(manager.get_title_model(), None);
+        assert!(manager
+            .set_title_model(Some(TitleModelSetting {
+                provider: " ".to_string(),
+                id: "small".to_string(),
+            }))
+            .is_err());
+    }
+
+    #[test]
+    fn tool_call_preview_settings_default_to_code_without_a_limit() {
+        let mut manager = SettingsManager::in_memory(&Settings::default());
+        assert_eq!(manager.get_tool_call_preview(), "code");
+        assert_eq!(manager.get_tool_call_description_max_chars(), None);
+        manager.set_tool_call_preview("description").unwrap();
+        manager
+            .set_tool_call_description_max_chars(Some(80))
+            .unwrap();
+        manager.reload().unwrap();
+        assert_eq!(manager.get_tool_call_preview(), "description");
+        assert_eq!(manager.get_tool_call_description_max_chars(), Some(80));
+        manager.set_tool_call_description_max_chars(None).unwrap();
+        assert_eq!(manager.get_tool_call_description_max_chars(), None);
+        assert!(manager.set_tool_call_preview("verbose").is_err());
+        assert!(manager
+            .set_tool_call_description_max_chars(Some(0))
+            .is_err());
+    }
+
+    #[test]
+    fn session_pins_toggle_in_pin_order_and_clear_when_empty() {
+        let mut manager = SettingsManager::in_memory(&Settings::default());
+        assert!(manager.toggle_session_pinned("b").unwrap());
+        assert!(manager.toggle_session_pinned("a").unwrap());
+        manager.reload().unwrap();
+        assert_eq!(manager.get_pinned_session_ids(), vec!["b", "a"]);
+        assert!(!manager.toggle_session_pinned("b").unwrap());
+        assert_eq!(manager.get_pinned_session_ids(), vec!["a"]);
+        assert!(!manager.toggle_session_pinned("a").unwrap());
+        manager.reload().unwrap();
+        assert_eq!(manager.get_pinned_session_ids(), Vec::<String>::new());
+        assert!(manager.global_settings().pinned_session_ids.is_none());
+        assert!(manager.toggle_session_pinned(" ").is_err());
+    }
+
+    #[test]
+    fn pins_drop_blank_and_duplicate_entries() {
+        let manager = SettingsManager::in_memory(&Settings {
+            pinned_session_ids: Some(vec![" a ".into(), String::new(), "a".into(), "b".into()]),
+            ..Settings::default()
+        });
+        assert_eq!(manager.get_pinned_session_ids(), vec!["a", "b"]);
     }
 }

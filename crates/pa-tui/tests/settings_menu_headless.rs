@@ -367,6 +367,33 @@ impl pa_tui::client_settings::ClientSettings for RecordingSettings {
     fn set_warnings_anthropic_extra_usage(&self, _enabled: bool) -> Result<()> {
         Ok(())
     }
+    fn title_model(&self) -> Option<String> {
+        None
+    }
+    fn set_title_model(&self, model: Option<&str>) -> Result<()> {
+        self.record(&format!("title-model={}", model.unwrap_or("none")))
+    }
+    fn tool_call_preview(&self) -> String {
+        "code".to_string()
+    }
+    fn set_tool_call_preview(&self, mode: &str) -> Result<()> {
+        self.record(&format!("tool-call-preview={mode}"))
+    }
+    fn tool_call_description_max_chars(&self) -> Option<u64> {
+        None
+    }
+    fn set_tool_call_description_max_chars(&self, max_chars: Option<u64>) -> Result<()> {
+        self.record(&format!("tool-call-description-max-chars={max_chars:?}"))
+    }
+    fn pinned_session_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn toggle_session_pinned(&self, _session_id: &str) -> Result<bool> {
+        Ok(true)
+    }
+    fn ensure_global_settings_file(&self) -> Result<std::path::PathBuf> {
+        Ok(std::path::PathBuf::from("settings.json"))
+    }
     fn update_channel(&self) -> Option<String> {
         None
     }
@@ -598,6 +625,46 @@ fn the_arrows_cycle_values_and_the_writes_persist() {
             "idle-eviction-minutes=90",
         ],
         "every arrow cycle persisted through the settings seam"
+    );
+}
+
+/// The tool-call rows persist through the settings seam: the preview mode
+/// flips to the model-written description and the description limit walks
+/// its presets from "none".
+#[test]
+fn the_tool_call_rows_persist_through_the_settings_seam() {
+    let mut steps = open_settings();
+    // 3 jumps to Display; seven downs land on Tool call preview, the next
+    // on Tool description max chars.
+    steps.push(HeadlessStep::Key(key(KeyCode::Char('3'))));
+    steps.push(HeadlessStep::WaitMs(100));
+    for _ in 0..7 {
+        steps.push(HeadlessStep::Key(key(KeyCode::Down)));
+    }
+    steps.push(HeadlessStep::Key(key(KeyCode::Right)));
+    steps.push(HeadlessStep::WaitMs(100));
+    steps.push(HeadlessStep::Key(key(KeyCode::Down)));
+    steps.push(HeadlessStep::Key(key(KeyCode::Right)));
+    steps.push(HeadlessStep::WaitMs(150));
+    let (frames, settings) = run_plan(steps);
+    let rows = frame_with(&frames, "Tool call preview");
+    let preview = rows
+        .iter()
+        .find(|row| row.contains("Tool call preview"))
+        .expect("the preview row renders");
+    assert!(preview.contains("Short description"), "got: {preview}");
+    let limit = rows
+        .iter()
+        .find(|row| row.contains("Tool description max chars"))
+        .expect("the limit row renders");
+    assert!(limit.contains("40"), "got: {limit}");
+    assert_eq!(
+        settings.log(),
+        vec![
+            "tool-call-preview=description",
+            "tool-call-description-max-chars=Some(40)",
+        ],
+        "both rows persisted through the seam"
     );
 }
 

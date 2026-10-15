@@ -63,28 +63,37 @@ fn opener(url: &str) -> Option<(PathBuf, Vec<String>)> {
     }
 }
 
-/// Open `url` in the user's browser. Fire-and-forget like TS
-/// `openHyperlink` (`execFile` with a swallowed callback): the link
-/// stays visible in the transcript, so a failed launch (no desktop
-/// session, no opener) never fails the click. The child is reaped on a
-/// parked thread — TS's `execFile` waits for exit, and an unwaited spawn
-/// would leak one zombie per click in the long-running TUI.
-pub(crate) fn open_in_browser(url: &str) {
-    let Some((program, args)) = opener(url) else {
-        return;
-    };
-    let Ok(mut child) = Command::new(program)
+/// Hand `target` (a URL or a file path) to the platform's default
+/// application. The child is reaped on a parked thread - TS's `execFile`
+/// waits for exit, and an unwaited spawn would leak one zombie per open in
+/// the long-running TUI.
+///
+/// # Errors
+///
+/// Returns the reason when the platform has no opener installed or the
+/// launch fails.
+pub(crate) fn open_with_default_app(target: &str) -> Result<(), String> {
+    let (program, args) =
+        opener(target).ok_or_else(|| "no opener is installed on this platform".to_string())?;
+    let mut child = Command::new(program)
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-    else {
-        return;
-    };
+        .map_err(|error| error.to_string())?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });
+    Ok(())
+}
+
+/// Open `url` in the user's browser. Fire-and-forget like TS
+/// `openHyperlink` (`execFile` with a swallowed callback): the link
+/// stays visible in the transcript, so a failed launch (no desktop
+/// session, no opener) never fails the click.
+pub(crate) fn open_in_browser(url: &str) {
+    let _ = open_with_default_app(url);
 }
 
 #[cfg(test)]

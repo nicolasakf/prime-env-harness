@@ -276,6 +276,7 @@ async fn the_roundtrip_reentry_renders_the_same_transcript() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     };
     let view_run = pa_tui::agents_view::run_agents_view(
         view_options,
@@ -432,6 +433,7 @@ async fn a_post_turn_sojourn_reentry_still_serves_the_held_packs() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     };
     let view_run = pa_tui::agents_view::run_agents_view(
         view_options,

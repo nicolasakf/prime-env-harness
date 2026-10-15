@@ -17,6 +17,7 @@ pub mod compaction;
 pub mod compaction_exec;
 pub mod compaction_trace;
 pub mod compaction_utils;
+pub mod conversation_title;
 pub mod engine;
 pub mod environments;
 pub mod error_classify;

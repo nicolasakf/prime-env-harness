@@ -11,7 +11,9 @@ use pa_types::daemon::DaemonCommand;
 use tokio::sync::mpsc;
 
 /// One rename request (TS `confirmRename`'s trimmed value): the target
-/// session and the name the dispatch carries.
+/// session and the name the dispatch carries. A live target with an empty
+/// name asks the daemon to generate the name with the title model; the
+/// dispatch's result carries the generated name back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Rename {
     pub(super) target: RenameTarget,
@@ -184,6 +186,9 @@ impl AgentsViewMode {
                     self.rebuild_rows();
                 }
             }
+            Err(error) if rename.name.is_empty() => {
+                self.set_status(&format!("Failed to generate session name: {error}"));
+            }
             Err(error) => {
                 self.set_status(&format!("Failed to rename agent: {error}"));
             }
@@ -199,10 +204,45 @@ impl AgentsViewMode {
 pub(super) fn spawn_rename_dispatch(
     client: &DaemonClient,
     ui_tx: mpsc::UnboundedSender<UiInput>,
-    rename: Rename,
+    mut rename: Rename,
 ) -> tokio::task::JoinHandle<()> {
     let client = client.clone();
     tokio::spawn(async move {
+        if let (RenameTarget::Live { active_session_id }, true) =
+            (&rename.target, rename.name.is_empty())
+        {
+            // The capability gate (a daemon without it needs a restart),
+            // then the generated name.
+            let outcome = if client.supports_server_capability("generate_session_title") {
+                match client
+                    .request(DaemonCommand::GenerateSessionTitle {
+                        id: None,
+                        active_session_id: active_session_id.clone(),
+                        rest: serde_json::Map::default(),
+                    })
+                    .await
+                {
+                    Ok(response) if response.success => response
+                        .data
+                        .as_ref()
+                        .and_then(|data| data.get("name"))
+                        .and_then(Value::as_str)
+                        .map(|name| rename.name = name.to_string())
+                        .ok_or_else(|| "the daemon returned no session name".to_string()),
+                    Ok(response) => Err(response
+                        .error
+                        .unwrap_or_else(|| "the command failed".into())),
+                    Err(error) => Err(format!("{error:#}")),
+                }
+            } else {
+                Err(
+                    "the daemon is running an older build; restart the daemon and try again"
+                        .to_string(),
+                )
+            };
+            let _ = ui_tx.send(UiInput::RenameResult { rename, outcome });
+            return;
+        }
         let request = match &rename.target {
             RenameTarget::Live { active_session_id } => DaemonCommand::Rename {
                 id: None,

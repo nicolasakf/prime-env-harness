@@ -21,8 +21,8 @@ use crate::agents_view_forest::{
 };
 use crate::agents_view_state::truncate_text;
 use crate::agents_view_state::{
-    build_layout, filter_empty_sessions, filter_unified_sessions, parse_search_query,
-    reconcile_unified_sessions, section_title, RowLayout, Section,
+    build_layout, display_section_title, filter_empty_sessions, filter_unified_sessions,
+    parse_search_query, reconcile_unified_sessions, RowLayout, Section, DISPLAY_SECTIONS,
 };
 
 /// The scope a scoped view opened on (TS `AgentsViewScopeKey` plus the
@@ -46,9 +46,15 @@ use render::Renderer;
 
 mod delete;
 
+mod environments;
+use environments::EnvironmentRunsFeed;
+
 #[cfg(test)]
 use delete::no_effect_summary;
 use delete::{spawn_delete_dispatch, DeleteAction, PendingDelete};
+
+mod pins;
+pub use pins::AgentsViewSettings;
 
 mod rename;
 use rename::{spawn_rename_dispatch, Rename};
@@ -118,6 +124,10 @@ pub struct AgentsViewOptions {
     /// view's runtime config with the session's own cwd removed, or the
     /// view's cwd when the saved directory no longer exists).
     pub create_config: serde_json::Value,
+    /// The settings seam the view reads and writes its pins through
+    /// (`pinnedSessionIds`, global scope); `None` shows no pins and
+    /// leaves the pin key inert.
+    pub client_settings: Option<AgentsViewSettings>,
 }
 
 /// The open action the run ended with (TS `AgentsViewRunResult`'s
@@ -326,6 +336,11 @@ enum UiInput {
         key: String,
         outcome: Result<(), String>,
     },
+    /// The live environment runs landed (or failed to): the Environments
+    /// column counts them per session.
+    EnvironmentRuns {
+        runs: Result<Vec<pa_types::environments::InstanceRun>, String>,
+    },
 }
 
 /// The flow's roster connection (TS `AgentsViewPersistentState.rosterClient`):
@@ -390,6 +405,13 @@ struct AgentsViewMode {
     theme: Theme,
     roster: Vec<Value>,
     saved: Vec<Value>,
+    /// The live environment runs the Environments column tallies per
+    /// provisioning session.
+    environment_runs: Vec<pa_types::environments::InstanceRun>,
+    environment_feed: EnvironmentRunsFeed,
+    /// The pinned session ids (global settings): their agents list in
+    /// the pinned block and survive the empty-session filter.
+    pinned_session_ids: std::collections::HashSet<String>,
     rows: Vec<AgentsViewRow>,
     selected: usize,
     query: String,
@@ -605,6 +627,11 @@ impl AgentsViewMode {
         // TS `persistentState.incidentNoticeState ??= createIncidentNoticeState()`:
         // the first run starts fresh; later runs continue the carried state.
         let incident_notice_state = options.incident_notice_state.take().unwrap_or_default();
+        let pinned_session_ids = options
+            .client_settings
+            .as_ref()
+            .map(|settings| settings.0.pinned_session_ids().into_iter().collect())
+            .unwrap_or_default();
         AgentsViewMode {
             options,
             theme,
@@ -612,6 +639,9 @@ impl AgentsViewMode {
             last_height: 0,
             roster: Vec::new(),
             saved: Vec::new(),
+            environment_runs: Vec::new(),
+            environment_feed: EnvironmentRunsFeed::default(),
+            pinned_session_ids,
             rows: Vec::new(),
             selected: 0,
             query,
@@ -919,6 +949,7 @@ async fn run_agents_view_surface(
     // removes its row by path). A first run - or one whose previous fetch
     // failed - arms the one fetch whose stream and result re-enter the
     // loop below.
+    mode.refresh_environment_runs(&client, &ui_tx);
     let mut catalog_request = (!mode.saved_catalog_loaded).then(|| {
         spawn_saved_catalog_fetch(&client, ui_tx.clone(), cwd.clone(), session_dir.clone())
     });
@@ -1139,6 +1170,11 @@ async fn run_agents_view_surface(
                 UiInput::KillResult { key, outcome } => {
                     mode.kill_result(&key, outcome);
                 }
+                UiInput::EnvironmentRuns { runs } => {
+                    if mode.apply_environment_runs(runs) {
+                        mode.refresh_environment_runs(&client, &ui_tx);
+                    }
+                }
                 // The saved-catalog scan landed (TS `armSavedSearchFetch`
                 // applying its result): the Inactive section builds now.
                 UiInput::SavedLoaded { sessions } => {
@@ -1220,7 +1256,15 @@ async fn run_agents_view_surface(
                         match maybe_event {
                             Some(DaemonClientEvent::RosterUpdate { changed, removed, resync }) => {
                                 mode.apply_roster_update(changed, removed, resync);
+                                // The first fetch waits on a live session
+                                // to route through.
+                                if !mode.environment_feed.requested {
+                                    mode.refresh_environment_runs(&client, &ui_tx);
+                                }
                                 redraw = true;
+                            }
+                            Some(DaemonClientEvent::EnvironmentRunsChanged) => {
+                                mode.refresh_environment_runs(&client, &ui_tx);
                             }
                             // The saved-catalog scan streams its rows while it
                             // runs (newest first): the view buffers the live
@@ -1492,6 +1536,7 @@ fn is_daemon_answer(input: &UiInput) -> bool {
             | UiInput::ReplyProgress(_)
             | UiInput::ReplyResult { .. }
             | UiInput::KillResult { .. }
+            | UiInput::EnvironmentRuns { .. }
     )
 }
 

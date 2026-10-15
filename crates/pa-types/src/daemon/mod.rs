@@ -20,8 +20,8 @@ pub const DAEMON_PROTOCOL_VERSION: u64 = 7;
 /// (TS #2506's field, landing ahead of TS main: the Rust deletion lifecycle
 /// captures the tombstoned child's usage durably before any unlink, so the
 /// field is populated where TS's open PR reads a removed path).
-pub const DAEMON_SCHEMA_REVISION: u64 = 30;
-pub const DAEMON_SCHEMA_ID: &str = "protocol-7-schema-30-8e4b17c2a9f5";
+pub const DAEMON_SCHEMA_REVISION: u64 = 31;
+pub const DAEMON_SCHEMA_ID: &str = "protocol-7-schema-31-generate-session-title";
 
 pub type DaemonClientId = String;
 pub type DaemonCommandId = String;
@@ -185,8 +185,11 @@ mod tests {
     fn protocol_constants_match_ts() {
         assert_eq!(DAEMON_PROTOCOL_NAME, "prime-agent.daemon");
         assert_eq!(DAEMON_PROTOCOL_VERSION, 7);
-        assert_eq!(DAEMON_SCHEMA_REVISION, 30);
-        assert_eq!(DAEMON_SCHEMA_ID, "protocol-7-schema-30-8e4b17c2a9f5");
+        assert_eq!(DAEMON_SCHEMA_REVISION, 31);
+        assert_eq!(
+            DAEMON_SCHEMA_ID,
+            "protocol-7-schema-31-generate-session-title"
+        );
         assert_eq!(DAEMON_UPDATE_RESTART_FORMAT_VERSION, 1);
     }
 }

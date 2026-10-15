@@ -100,6 +100,29 @@ fn cell_code(card: &ToolCallCard) -> &str {
         .unwrap_or_default()
 }
 
+/// The model's one-sentence `description` argument (present only when the
+/// session asks for descriptions): ANSI and control characters out,
+/// whitespace collapsed; blank or non-string values fall back to the code
+/// preview.
+fn cell_description(card: &ToolCallCard) -> Option<String> {
+    let raw = card.args.get("description").and_then(Value::as_str)?;
+    let cleaned = crate::ansi::strip_ansi(raw)
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>();
+    let normalized = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+/// How the summary line fits its row: collapsed cells keep one row
+/// (a description gives way to the metadata), expanded cells with a
+/// description wrap it in full above the code.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SummaryFit {
+    Truncate,
+    Wrap,
+}
+
 /// Render the ipython cell card: the fixed summary line, then the expanded
 /// code and output rows when conversation detail is `all`.
 #[must_use]
@@ -149,9 +172,10 @@ fn layout(
         .and_then(|result| read_background_shell(code, &result.details));
 
     // The top line is identical collapsed or expanded, so detail toggles
-    // never shift the layout or indentation.
-    lines.push(|| {
-        collapsed_line(
+    // never shift the layout or indentation; a description wraps in full
+    // once expanded.
+    if detail.tool_output_expanded() && cell_description(card).is_some() {
+        let summary = collapsed_line(
             card,
             &details,
             background.as_ref(),
@@ -159,8 +183,23 @@ fn layout(
             theme,
             width,
             code,
-        )
-    });
+            SummaryFit::Wrap,
+        );
+        lines.wrapped_line(&summary, width);
+    } else {
+        lines.push(|| {
+            collapsed_line(
+                card,
+                &details,
+                background.as_ref(),
+                frame,
+                theme,
+                width,
+                code,
+                SummaryFit::Truncate,
+            )
+        });
+    }
     // TS renders the sent-message receipt rows below the code (and below
     // the diff rows, which this card does not render) even when the cell
     // is collapsed; the body opens up only when expanded.
@@ -178,6 +217,7 @@ fn layout(
 }
 
 /// The fixed marker + summary line (TS `collapsedLine`).
+#[allow(clippy::too_many_arguments)] // the card's render context, passed through whole
 fn collapsed_line(
     card: &ToolCallCard,
     details: &IpythonDetails,
@@ -186,6 +226,7 @@ fn collapsed_line(
     theme: &Theme,
     width: usize,
     code: &str,
+    fit: SummaryFit,
 ) -> Line {
     let muted = theme.fg_style(ThemeColor::Muted);
     let dim = theme.fg_style(ThemeColor::Dim);
@@ -218,10 +259,17 @@ fn collapsed_line(
     marker.push(Span::raw(" "));
     marker.push(Span::styled(language_label, muted));
     parts.push(marker);
-    if !preview.text.is_empty() {
+    let description = cell_description(card);
+    let preview_index = parts.len();
+    let mut has_preview = true;
+    if let Some(description) = &description {
+        parts.push(vec![Span::styled(description.clone(), dim)]);
+    } else if !preview.text.is_empty() {
         parts.push(vec![Span::styled(preview.text, dim)]);
     } else if !card.started {
         parts.push(vec![Span::styled("waiting for code".to_string(), dim)]);
+    } else {
+        has_preview = false;
     }
     if let Some(counts) = line_counts(card, details, code) {
         parts.push(vec![Span::styled(counts, dim)]);
@@ -250,6 +298,31 @@ fn collapsed_line(
         }
     }
 
+    // A collapsed description yields to the metadata: it gets the width
+    // the other parts, the separators, and the row indent leave over.
+    if let (Some(description), SummaryFit::Truncate, true) = (&description, fit, has_preview) {
+        let separator_width = str_width(" \u{00b7} ");
+        let metadata_width: usize = parts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != preview_index)
+            .map(|(_, part)| {
+                part.iter()
+                    .map(|span| str_width(&span.content))
+                    .sum::<usize>()
+            })
+            .sum::<usize>()
+            + separator_width * parts.len().saturating_sub(2);
+        let available = width
+            .saturating_sub(metadata_width + separator_width + 1)
+            .max(1);
+        parts[preview_index] = truncate_line(
+            &vec![Span::styled(description.clone(), dim)],
+            available,
+            "\u{2026}",
+        );
+    }
+
     let mut row: Line = vec![Span::raw(" ")];
     for (index, part) in parts.iter().enumerate() {
         if index > 0 {
@@ -257,7 +330,10 @@ fn collapsed_line(
         }
         row.extend(part.iter().cloned());
     }
-    truncate_line(&row, width, "")
+    match fit {
+        SummaryFit::Truncate => truncate_line(&row, width, ""),
+        SummaryFit::Wrap => row,
+    }
 }
 
 /// `\u{2191}in \u{2193}out lines` (TS `lineCounts`): non-empty input

@@ -47,6 +47,81 @@ fn done_cell_summary_line() {
         );
 }
 
+fn described_card(description: &str) -> ToolCallCard {
+    let mut card = cell_card(
+        "print('code')",
+        json!({ "status": "ok", "durationMs": 12, "stdout": "code\n" }),
+        false,
+        false,
+    );
+    card.args = json!({ "description": description, "code": "print('code')" });
+    card
+}
+
+#[test]
+fn description_replaces_the_code_preview_and_yields_to_the_metadata() {
+    let sentence = (0..16)
+        .map(|index| format!("operation{index}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let card = described_card(&format!("\u{1b}[31m {sentence}\u{1b}[0m\n\t\u{7}"));
+    let wide = text_of(&render(&card, 0, Detail::Overview, &theme(), 300, true)[0]);
+    assert!(
+        wide.contains(&format!("python \u{00b7} {sentence} \u{00b7}")),
+        "got: {wide}"
+    );
+    assert!(!wide.contains("print('code')"), "got: {wide}");
+    let narrow_lines = render(&card, 0, Detail::Overview, &theme(), 80, true);
+    assert_eq!(narrow_lines.len(), 1);
+    let narrow = text_of(&narrow_lines[0]);
+    assert!(
+        narrow.contains('\u{2026}'),
+        "the sentence truncates: {narrow}"
+    );
+    assert!(narrow.ends_with("12ms"), "the metadata stays: {narrow}");
+    assert!(crate::width::str_width(&narrow) <= 80, "got: {narrow}");
+}
+
+#[test]
+fn expanded_description_wraps_above_the_code() {
+    let sentence = (0..16)
+        .map(|index| format!("operation{index}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let card = described_card(&sentence);
+    let lines = render(&card, 0, Detail::All, &theme(), 60, true);
+    let flat: Vec<String> = lines.iter().map(text_of).collect();
+    let joined = flat.join(" ");
+    let described = joined.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(described.contains(&sentence), "got: {flat:?}");
+    assert!(
+        described.find("operation15") < described.find("print('code')"),
+        "the sentence precedes the code: {flat:?}"
+    );
+    assert!(
+        flat.iter().all(|row| crate::width::str_width(row) <= 60),
+        "got: {flat:?}"
+    );
+    assert_eq!(
+        lines.len(),
+        count(&card, 0, Detail::All, &theme(), 60, true),
+        "the count sink agrees with the painted rows"
+    );
+}
+
+#[test]
+fn unusable_descriptions_fall_back_to_the_code_preview() {
+    for description in ["", " \n\t", "\u{1b}[0m"] {
+        let card = described_card(description);
+        let text = text_of(&render(&card, 0, Detail::Overview, &theme(), 100, true)[0]);
+        assert!(text.contains("print('code')"), "{description:?}: {text}");
+    }
+    let mut numeric = described_card("unused");
+    numeric.args = json!({ "description": 42, "code": "print('code')" });
+    let text = text_of(&render(&numeric, 0, Detail::Overview, &theme(), 100, true)[0]);
+    assert!(text.contains("print('code')"), "got: {text}");
+}
+
 #[test]
 fn error_cell_summary_line() {
     let card = cell_card(

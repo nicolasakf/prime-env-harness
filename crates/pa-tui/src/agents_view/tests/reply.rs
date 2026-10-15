@@ -287,22 +287,65 @@ fn view_commands_route_and_reject() {
         matches!(&mode.composer, Composer::Reply(reply) if reply.editor.get_text() == "/tree"),
         "the rejected command keeps its draft"
     );
-    // /name with no args: the usage warning, the draft stays (the
-    // restored old draft clears first — the editor kept the rejected
+    // /name with no args on a saved row: the usage warning, the draft stays
+    // (the restored old draft clears first - the editor kept the rejected
     // command, TS's restore).
     mode.handle_key("ctrl+u");
+    let mut saved_name = armed_saved();
     for ch in "/name".chars() {
-        mode.handle_key(ch.to_string().as_str());
+        saved_name.handle_key(ch.to_string().as_str());
     }
-    mode.handle_key("enter");
-    assert_eq!(mode.status_text(), Some("Usage: /name <session name>"));
+    saved_name.handle_key("enter");
+    assert_eq!(
+        saved_name.status_text(),
+        Some("Usage: /name <session name>")
+    );
     assert!(
-        mode.pending_rename.is_none(),
+        saved_name.pending_rename.is_none(),
         "the usage warning dispatches nothing"
     );
+    // /name with no args on a live row asks for a generated name: the
+    // empty name marks the generate dispatch.
+    let mut generating = armed_live();
+    for ch in "/name".chars() {
+        generating.handle_key(ch.to_string().as_str());
+    }
+    generating.handle_key("enter");
+    assert_eq!(generating.status_text(), Some("Generating session name..."));
+    assert_eq!(
+        generating.pending_rename,
+        Some(Rename {
+            target: RenameTarget::Live {
+                active_session_id: "p-live".to_string()
+            },
+            name: String::new(),
+        }),
+        "the generate dispatch rides the rename flow with an empty name"
+    );
+    // The generated name lands like a rename; a failure names the generate
+    // step and restores the draft.
+    let landed = generating.pending_rename.take().expect("the generate");
+    generating.rename_result(
+        Rename {
+            name: "Fix the build".to_string(),
+            ..landed
+        },
+        Ok(()),
+    );
+    assert_eq!(generating.status_text(), Some("Renamed to Fix the build"));
+    let mut failing = armed_live();
+    for ch in "/name".chars() {
+        failing.handle_key(ch.to_string().as_str());
+    }
+    failing.handle_key("enter");
+    let failed = failing.pending_rename.take().expect("the generate");
+    failing.rename_result(failed, Err("no title model".to_string()));
+    assert_eq!(
+        failing.status_text(),
+        Some("Failed to generate session name: no title model")
+    );
     // /name with args dispatches the rename against the live target.
-    mode.handle_key(" ");
-    for ch in "new".chars() {
+    for ch in "/name new".chars() {
         mode.handle_key(ch.to_string().as_str());
     }
     mode.handle_key("enter");

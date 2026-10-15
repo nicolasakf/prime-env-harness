@@ -24,6 +24,7 @@ mod lifecycle;
 mod summary;
 
 mod connection;
+mod conversation_title;
 
 pub(crate) use connection::{AuthOutcome, ConnectionSink, EventPump, OutboundFrame};
 
@@ -43,6 +44,7 @@ pub(crate) use queue::{
 mod create;
 mod turn;
 
+use conversation_title::ConversationTitles;
 use create::{active_session_id_of, worker_server_capabilities};
 // session_summary in this re-export serves the in-crate test modules only (the lib target
 // does not use it), so the unused-import lint is allowed deliberately here.
@@ -62,7 +64,7 @@ pub use env::{
     WORKER_TELEMETRY_DISABLED_ENV, WORKER_TOKEN_ENV,
 };
 use serde_json::Map;
-pub(crate) use session_core::SessionCore;
+pub(crate) use session_core::{ScopeOrigin, SessionCore};
 use std::collections::VecDeque;
 // PathBuf is read only by this facade's in-file test modules (via `use super::*`); the
 // lib-target import is flagged unused since the lib users moved out, so allow it deliberately.
@@ -160,6 +162,9 @@ pub struct Worker {
     /// `/context` timeout), so it runs as a background refresh and the
     /// request serves the cached snapshot (`context_tree_cache`).
     pub(crate) context_tree: std::sync::Arc<crate::context_tree_cache::ContextTreeCache>,
+    /// Conversation titles: the automatic one-shot generation and the
+    /// manual `generate_session_title` command share this state.
+    pub(crate) titles: Arc<ConversationTitles>,
     /// Session export: the `/export` HTML and JSONL branches.
     exports: crate::session_export::ExportCommands,
     /// Session-scoped ACP MCP servers for engines without their own store
@@ -334,6 +339,7 @@ impl Worker {
             follow_up_mode: "one-at-a-time".to_string(),
             forced_all_steering: false,
             scoped_models: Vec::new(),
+            scope_origin: ScopeOrigin::Session,
             retry_abort_requested: false,
             queued_input_suspended: false,
             pending_next_turn: Vec::new(),
@@ -389,6 +395,7 @@ impl Worker {
         // TS daemon-mode wires the same `forSessionArtifacts()` store into
         // the session runtime).
         let user_bash = std::sync::Arc::new(crate::user_bash::UserBash::new());
+        let titles = Arc::new(ConversationTitles::default());
         let scheduled = std::sync::Arc::new(crate::scheduled_jobs::ScheduledJobs::new(
             Arc::clone(&core),
             Arc::clone(&work_notify),
@@ -715,6 +722,7 @@ impl Worker {
                 active_session_id,
                 roster_pushes: roster_pushes.clone(),
                 user_bash: std::sync::Arc::clone(&user_bash),
+                titles: Arc::clone(&titles),
                 passivation: crate::worker::turn::PassivationContext {
                     agent_dir: config.agent_dir.clone(),
                     link: Arc::clone(&roster_link),
@@ -788,6 +796,7 @@ impl Worker {
             compaction,
             tree_navigation,
             context_tree: std::sync::Arc::new(crate::context_tree_cache::ContextTreeCache::new()),
+            titles,
             exports,
             acp_mcp: std::sync::Arc::new(std::sync::Mutex::new(acp_mcp)),
             user_bash,

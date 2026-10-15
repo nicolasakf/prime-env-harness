@@ -19,8 +19,8 @@ use crate::kernel::shared::HostRequestHandlers;
 use crate::session::manager::SessionManager;
 use crate::skills::{get_python_skill_runtime_info, Skill};
 use crate::tools::ipython::{
-    IpythonKernelProvisioner, IpythonToolOptions, KernelAttachment, KernelErrorInfo,
-    KernelExecError, KernelExecuteOptions, KernelExecutor,
+    IpythonKernelProvisioner, IpythonPreview, IpythonToolOptions, KernelAttachment,
+    KernelErrorInfo, KernelExecError, KernelExecuteOptions, KernelExecutor,
 };
 
 use super::host_requests::SessionBinding;
@@ -369,9 +369,13 @@ fn convert_execute_result(
 
 /// Build the ipython tool options for a wired kernel provisioner.
 #[must_use]
-pub fn ipython_tool_options(provisioner: Arc<KernelProvisioner>) -> IpythonToolOptions {
+pub fn ipython_tool_options(
+    provisioner: Arc<KernelProvisioner>,
+    preview: IpythonPreview,
+) -> IpythonToolOptions {
     IpythonToolOptions {
         provisioner,
         ui: None,
+        preview,
     }
 }

@@ -16,6 +16,12 @@ fn menu() -> SettingsMenu {
         available_themes: vec!["prime".to_string(), "dark".to_string()],
         theme: "prime".to_string(),
         idle_eviction_minutes: "90".to_string(),
+        available_title_models: vec![
+            "alpha/small".to_string(),
+            "alpha/large".to_string(),
+            "beta/tiny".to_string(),
+        ],
+        tool_call_preview: TOOL_CALL_PREVIEW_CODE.to_string(),
         ..Default::default()
     };
     SettingsMenu::new(settings_menu_rows(&values))
@@ -52,12 +58,18 @@ fn tabs_partition_the_settings_rows() {
                     "steering-mode",
                     "follow-up-mode",
                     "quiet-startup",
-                    "warnings"
+                    "warnings",
+                    "open-settings-file"
                 ]
             ),
             (
                 "Models",
-                vec!["thinking", "transport", "default-service-tier"]
+                vec![
+                    "thinking",
+                    "transport",
+                    "default-service-tier",
+                    "title-model"
+                ]
             ),
             (
                 "Display",
@@ -68,7 +80,9 @@ fn tabs_partition_the_settings_rows() {
                     "show-images",
                     "auto-resize-images",
                     "block-images",
-                    "mermaid-rendering"
+                    "mermaid-rendering",
+                    "tool-call-preview",
+                    "tool-call-description-max-chars"
                 ]
             ),
             (
@@ -545,4 +559,136 @@ fn opening_into_a_setting_keeps_the_top_bar_and_the_padding() {
     assert!(text
         .iter()
         .any(|row| row.starts_with("  Enter select · Esc back")));
+}
+
+/// Select the row `id` by walking its tab's selection (the tab's rows are
+/// in layout order).
+fn select_row(menu: &mut SettingsMenu, tab_key: &str, id: &str) {
+    menu.handle_key(tab_key, &kb());
+    let tab = &menu.tabs[menu.tab];
+    let position = tab
+        .filtered
+        .iter()
+        .position(|&index| menu.rows[index].id == id)
+        .expect("the row rides the tab");
+    for _ in 0..position {
+        menu.handle_key("down", &kb());
+    }
+}
+
+#[test]
+fn an_action_row_reports_activate_and_ignores_the_arrows() {
+    let mut menu = menu();
+    select_row(&mut menu, "1", "open-settings-file");
+    assert_eq!(menu.handle_key("left", &kb()), SettingsMenuAction::None);
+    assert_eq!(menu.handle_key("right", &kb()), SettingsMenuAction::None);
+    assert_eq!(
+        menu.handle_key("enter", &kb()),
+        SettingsMenuAction::Activate {
+            id: "open-settings-file"
+        }
+    );
+    assert_eq!(
+        menu.handle_key("space", &kb()),
+        SettingsMenuAction::Activate {
+            id: "open-settings-file"
+        }
+    );
+}
+
+#[test]
+fn the_title_model_submenu_filters_as_you_type_and_selects() {
+    let mut menu = menu();
+    select_row(&mut menu, "2", "title-model");
+    assert_eq!(menu.handle_key("enter", &kb()), SettingsMenuAction::None);
+    let text = render_text(&menu).join("\n");
+    assert!(text.contains("Conversation Title Model"), "got: {text}");
+    assert!(text.contains("Search: "), "got: {text}");
+    // The unfiltered list leads with none, then the models.
+    for option in ["none", "alpha/small", "alpha/large", "beta/tiny"] {
+        assert!(text.contains(option), "{option} listed: {text}");
+    }
+    for key in ["a", "l", "p", "h", "a", "/", "l"] {
+        assert_eq!(menu.handle_key(key, &kb()), SettingsMenuAction::None);
+    }
+    let filtered = render_text(&menu).join("\n");
+    assert!(filtered.contains("Search: alpha/l"), "got: {filtered}");
+    assert!(filtered.contains("alpha/large"), "got: {filtered}");
+    assert!(!filtered.contains("alpha/small"), "got: {filtered}");
+    assert!(!filtered.contains("beta/tiny"), "got: {filtered}");
+    assert_eq!(
+        menu.handle_key("enter", &kb()),
+        SettingsMenuAction::Change {
+            id: "title-model",
+            value: "alpha/large".to_string()
+        }
+    );
+    // The row shows the choice and the submenu closed.
+    assert!(render_text(&menu)
+        .iter()
+        .any(|row| row.contains("Conversation title model") && row.contains("alpha/large")));
+}
+
+#[test]
+fn the_title_model_submenu_selects_none_and_backspace_widens_the_filter() {
+    let mut menu = menu();
+    select_row(&mut menu, "2", "title-model");
+    menu.handle_key("enter", &kb());
+    menu.handle_key("z", &kb());
+    assert!(render_text(&menu).join("\n").contains("No matching models"));
+    menu.handle_key("backspace", &kb());
+    assert_eq!(
+        menu.handle_key("enter", &kb()),
+        SettingsMenuAction::Change {
+            id: "title-model",
+            value: "none".to_string()
+        },
+        "an emptied filter lists none first"
+    );
+}
+
+#[test]
+fn the_tool_call_rows_cycle_and_keep_a_custom_limit() {
+    let mut menu = menu();
+    select_row(&mut menu, "3", "tool-call-preview");
+    assert_eq!(
+        menu.handle_key("enter", &kb()),
+        SettingsMenuAction::Change {
+            id: "tool-call-preview",
+            value: TOOL_CALL_PREVIEW_DESCRIPTION.to_string()
+        }
+    );
+    let limit_row_values = |limit: Option<u64>| {
+        settings_menu_rows(&SettingsCurrentValues {
+            tool_call_description_max_chars: limit,
+            ..Default::default()
+        })
+        .into_iter()
+        .find(|row| row.id == "tool-call-description-max-chars")
+        .and_then(|row| row.values)
+    };
+    assert_eq!(
+        limit_row_values(Some(100)),
+        Some(
+            ["none", "40", "80", "100", "120", "160", "240"]
+                .map(String::from)
+                .to_vec()
+        )
+    );
+    assert_eq!(
+        limit_row_values(None),
+        Some(
+            ["none", "40", "80", "120", "160", "240"]
+                .map(String::from)
+                .to_vec()
+        )
+    );
+    menu.handle_key("down", &kb());
+    assert_eq!(
+        menu.handle_key("enter", &kb()),
+        SettingsMenuAction::Change {
+            id: "tool-call-description-max-chars",
+            value: "40".to_string()
+        }
+    );
 }

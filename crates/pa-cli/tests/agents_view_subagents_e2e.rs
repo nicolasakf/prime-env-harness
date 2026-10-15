@@ -216,6 +216,7 @@ fn view_options(
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     }
 }
 

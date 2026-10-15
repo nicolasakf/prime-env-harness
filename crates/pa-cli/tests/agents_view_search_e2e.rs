@@ -247,6 +247,7 @@ async fn search_matches_names_ids_and_cwd_never_transcripts() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     };
     let plan = AgentsHeadlessPlan {
         steps: vec![
@@ -400,6 +401,7 @@ async fn ranked_hits_sort_by_relevance_then_recency() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     };
     let plan = AgentsHeadlessPlan {
         steps: vec![

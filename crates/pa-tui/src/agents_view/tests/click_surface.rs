@@ -4,13 +4,14 @@
 use super::*;
 
 /// The exact expected idle-row text: name cell (icon + title, clipped or
-/// padded to `name_width`), the model cell padded to its column, then
-/// the cost/age details.
+/// padded to `name_width`), the model cell and the empty environments
+/// cell padded to their columns, then the cost/age details.
 fn expected_row(title_cell: &str, layout: &RowLayout) -> String {
     let bullet = "\u{2022}";
     format!(
-        "{bullet} {title_cell}  {}  $0.00   1s",
+        "{bullet} {title_cell}  {}  {}  $0.00   1s",
         cell("mock-1", layout.model_width),
+        cell("\u{2014}", layout.environments_width),
     )
 }
 
@@ -261,28 +262,102 @@ fn a_click_clears_the_exit_hint_and_the_armed_delete_confirm() {
 #[test]
 fn long_session_names_clip_to_the_name_column() {
     let (mode, index) = mode_with_row(&"a".repeat(100), "mock-1");
-    let layout = build_layout(&mode.rows, 120);
-    // TS `buildCompactAgentsViewLayout` at width 120 with these rows.
-    assert_eq!(layout.name_width, 28);
-    assert_eq!(layout.model_width, 12);
-    let line = mode.render_row(&mode.rows[index], &layout, 120, false);
+    // A pane too narrow for the title: the session name takes what the
+    // secondary columns' reserve leaves.
+    let layout = build_layout(&mode.rows, &mode.environment_runs, 60);
+    assert_eq!(
+        (
+            layout.name_width,
+            layout.model_width,
+            layout.environments_width
+        ),
+        (26, 6, 12)
+    );
+    let line = mode.render_row(&mode.rows[index], &layout, 60, false);
     let text = flat(&line);
     // TS `formatTableCell` clips with an empty ellipsis marker: the
-    // name cell keeps the icon and space plus 26 name characters.
-    assert_eq!(text, expected_row(&"a".repeat(26), &layout));
+    // name cell keeps the icon and space plus the rest of the name column.
+    assert_eq!(text, expected_row(&"a".repeat(24), &layout));
     // Every column still renders after the clipped name.
     let model_at = text.find("mock-1").expect("model column present");
-    assert_eq!(str_width(&text[..model_at]), 28 + 2);
+    assert_eq!(str_width(&text[..model_at]), 26 + 2);
     assert!(text.ends_with("$0.00   1s"));
+}
+
+#[test]
+fn the_session_column_expands_to_fit_its_longest_title() {
+    let (mode, index) = mode_with_row(&"a".repeat(50), "mock-1");
+    let layout = build_layout(&mode.rows, &mode.environment_runs, 120);
+    assert_eq!(
+        (
+            layout.name_width,
+            layout.model_width,
+            layout.environments_width
+        ),
+        (52, 6, 12)
+    );
+    let line = mode.render_row(&mode.rows[index], &layout, 120, false);
+    assert_eq!(flat(&line), expected_row(&"a".repeat(50), &layout));
 }
 
 #[test]
 fn short_session_names_pad_to_the_name_column() {
     let (mode, index) = mode_with_row("short name", "mock-1");
-    let layout = build_layout(&mode.rows, 120);
-    assert_eq!(layout.name_width, 28);
+    let layout = build_layout(&mode.rows, &mode.environment_runs, 120);
+    assert_eq!(layout.name_width, 2 + 10);
     let line = mode.render_row(&mode.rows[index], &layout, 120, false);
-    let text = flat(&line);
-    let name_cell = format!("short name{}", " ".repeat(28 - 2 - 10));
-    assert_eq!(text, expected_row(&name_cell, &layout));
+    assert_eq!(flat(&line), expected_row("short name", &layout));
+}
+
+#[test]
+fn secondary_columns_drop_before_the_session_name_on_a_narrow_pane() {
+    let (mode, _) = mode_with_row(&"a".repeat(100), "mock-1");
+    let layout = build_layout(&mode.rows, &mode.environment_runs, 30);
+    assert_eq!(
+        (
+            layout.name_width,
+            layout.model_width,
+            layout.environments_width
+        ),
+        (18, 0, 0)
+    );
+    assert_eq!(
+        layout.legend.trim_end(),
+        format!("{:<18}   Cost  Age", "Session")
+    );
+}
+
+#[test]
+fn the_environments_cell_counts_the_runs_the_session_provisioned() {
+    let (mut mode, index) = mode_with_row("builder", "mock-1");
+    mode.rows[index].summary = serde_json::json!({
+        "sessionName": "builder",
+        "activeSessionId": "s-builder",
+    });
+    let run = |builder: &str, phase: &str| -> pa_types::environments::InstanceRun {
+        serde_json::from_value(serde_json::json!({
+            "instance": {
+                "id": "i1", "definition_id": "d1", "version": "v1",
+                "policy": { "backend": "local" },
+            },
+            "phase": phase,
+            "reason": null,
+            "builder_session_id": builder,
+        }))
+        .expect("run")
+    };
+    mode.environment_runs = vec![
+        run("s-builder", "running"),
+        run("s-builder", "running"),
+        run("s-builder", "paused"),
+        run("s-builder", "stalled"),
+        run("s-other", "running"),
+    ];
+    let layout = build_layout(&mode.rows, &mode.environment_runs, 120);
+    let text = flat(&mode.render_row(&mode.rows[index], &layout, 120, false));
+    assert!(
+        text.contains("2 running, 1 paused, 1 stalled"),
+        "environments cell: {text:?}"
+    );
+    assert!(layout.legend.contains("Environments"));
 }

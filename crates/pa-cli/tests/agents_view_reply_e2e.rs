@@ -211,6 +211,7 @@ fn view_options(socket: &Path, session_dir: &Path, config: serde_json::Value) ->
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: config,
+        client_settings: None,
     }
 }
 

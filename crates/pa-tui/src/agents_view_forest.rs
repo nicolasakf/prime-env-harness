@@ -18,7 +18,7 @@
 
 use serde_json::Value;
 
-use crate::agents_view_state::Section;
+use crate::agents_view_state::{DisplaySection, Section};
 
 mod lineage;
 mod rows;
@@ -48,6 +48,9 @@ pub struct AgentsViewRow {
     /// Which of the three row shapes this row renders as.
     pub kind: RowKind,
     pub section: Section,
+    /// The session is pinned: it lists in the pinned block above the
+    /// status sections (nested rows carry their parent's pin).
+    pub pinned: bool,
     pub identity: String,
     /// The agent row this row is nested under (summary rows and nested
     /// children carry their parent's identity).
@@ -100,6 +103,16 @@ pub(crate) fn is_summary_row_identity(identity: &str) -> bool {
 }
 
 impl AgentsViewRow {
+    /// The list block this row renders in.
+    #[must_use]
+    pub fn display_section(&self) -> DisplaySection {
+        if self.pinned {
+            DisplaySection::Pinned
+        } else {
+            DisplaySection::Status(self.section)
+        }
+    }
+
     /// Rows the selection may land on (TS `selectable`): the program's
     /// code rows are read-only context, every session row selects.
     #[must_use]

@@ -28,7 +28,7 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
         hello["schemaId"]
             .as_str()
             .map(std::string::ToString::to_string),
-        Some("protocol-7-schema-30-8e4b17c2a9f5".to_string())
+        Some("protocol-7-schema-31-generate-session-title".to_string())
     );
     assert!(hello["supervisorOwnerToken"].is_string());
     assert!(hello["supervisorProcessStartId"]
@@ -61,6 +61,7 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
             "session_input_pause",
             "acp_mcp_servers",
             "abort_and_send_queued",
+            "generate_session_title",
             "agent_roster",
             "direct_peer_transport",
         ])

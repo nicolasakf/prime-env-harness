@@ -405,6 +405,33 @@ impl pa_tui::client_settings::ClientSettings for StubSettings {
     fn set_warnings_anthropic_extra_usage(&self, _enabled: bool) -> Result<()> {
         Ok(())
     }
+    fn title_model(&self) -> Option<String> {
+        None
+    }
+    fn set_title_model(&self, _model: Option<&str>) -> Result<()> {
+        Ok(())
+    }
+    fn tool_call_preview(&self) -> String {
+        "code".to_string()
+    }
+    fn set_tool_call_preview(&self, _mode: &str) -> Result<()> {
+        Ok(())
+    }
+    fn tool_call_description_max_chars(&self) -> Option<u64> {
+        None
+    }
+    fn set_tool_call_description_max_chars(&self, _max_chars: Option<u64>) -> Result<()> {
+        Ok(())
+    }
+    fn pinned_session_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn toggle_session_pinned(&self, _session_id: &str) -> Result<bool> {
+        Ok(true)
+    }
+    fn ensure_global_settings_file(&self) -> Result<std::path::PathBuf> {
+        Ok(std::path::PathBuf::from("settings.json"))
+    }
     fn update_channel(&self) -> Option<String> {
         None
     }

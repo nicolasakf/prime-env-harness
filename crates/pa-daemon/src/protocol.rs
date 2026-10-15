@@ -26,7 +26,7 @@ pub const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION: u64 = DAEMON_PROTOCOL_VE
 /// marker lives in `runtime.buildId`).
 pub const DAEMON_APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Command types the daemon recognizes (TS `DAEMON_COMMAND_TYPES`, the 106
+/// Command types the daemon recognizes (TS `DAEMON_COMMAND_TYPES`, the 107
 /// client command types in TS declared order, followed by the Rust-native
 /// supervisor/worker frames the Rust daemon additionally accepts).
 pub const KNOWN_COMMAND_TYPES: &[&str] = &[
@@ -122,6 +122,7 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "export_html",
     "export_jsonl",
     "set_session_name",
+    "generate_session_title",
     "get_rlm_max_depth_status",
     "set_rlm_max_depth",
     "rename_saved_session",
@@ -333,6 +334,7 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "session_input_pause",
                 "acp_mcp_servers",
                 "abort_and_send_queued",
+                "generate_session_title",
                 "agent_roster",
                 "direct_peer_transport",
             ]
@@ -847,6 +849,9 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::SetSessionName {
             active_session_id, ..
         }
+        | DaemonCommand::GenerateSessionTitle {
+            active_session_id, ..
+        }
         | DaemonCommand::GetRlmMaxDepthStatus {
             active_session_id, ..
         }
@@ -1035,6 +1040,7 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::ExportHtml { .. } => "export_html",
         DaemonCommand::ExportJsonl { .. } => "export_jsonl",
         DaemonCommand::SetSessionName { .. } => "set_session_name",
+        DaemonCommand::GenerateSessionTitle { .. } => "generate_session_title",
         DaemonCommand::GetRlmMaxDepthStatus { .. } => "get_rlm_max_depth_status",
         DaemonCommand::SetRlmMaxDepth { .. } => "set_rlm_max_depth",
         DaemonCommand::RenameSavedSession { .. } => "rename_saved_session",

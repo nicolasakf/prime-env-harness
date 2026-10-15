@@ -715,5 +715,6 @@ pub(crate) fn view_options(socket: PathBuf, anchor: Option<String>) -> AgentsVie
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     }
 }

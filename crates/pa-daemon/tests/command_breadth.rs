@@ -107,6 +107,7 @@ const TS_DAEMON_COMMAND_TYPES: &[&str] = &[
     "export_html",
     "export_jsonl",
     "set_session_name",
+    "generate_session_title",
     "get_rlm_max_depth_status",
     "set_rlm_max_depth",
     "rename_saved_session",
@@ -443,6 +444,10 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
     (
         "set_session_name",
         r#"{"type": "set_session_name", "activeSessionId": "sess", "name": "x"}"#,
+    ),
+    (
+        "generate_session_title",
+        r#"{"type": "generate_session_title", "activeSessionId": "sess"}"#,
     ),
     (
         "get_rlm_max_depth_status",

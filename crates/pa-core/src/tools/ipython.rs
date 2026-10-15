@@ -337,24 +337,70 @@ async fn execute_with_busy_kernel_choice(
     }
 }
 
+/// How ipython tool calls preview in the transcript.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum IpythonPreview {
+    /// The code itself (the default; the tool takes only `code`).
+    #[default]
+    Code,
+    /// The model first writes a one-sentence `description` that the
+    /// transcript shows in place of the code; `max_chars` is the limit the
+    /// schema asks it to respect.
+    Description { max_chars: Option<u64> },
+}
+
+impl IpythonPreview {
+    /// The preview the `toolCallPreview` and `toolCallDescriptionMaxChars`
+    /// settings select.
+    #[must_use]
+    pub fn from_settings(settings: &crate::settings::SettingsManager) -> Self {
+        match settings.get_tool_call_preview() {
+            "description" => Self::Description {
+                max_chars: settings.get_tool_call_description_max_chars(),
+            },
+            _ => Self::Code,
+        }
+    }
+}
+
 /// Options for the ipython tool.
 pub struct IpythonToolOptions {
     /// Shared provisioner owning the kernel lifecycle.
     pub provisioner: Arc<dyn IpythonKernelProvisioner>,
     /// UI surface; `None` in headless sessions.
     pub ui: Option<Arc<dyn IpythonToolUi>>,
+    /// What the transcript previews for a call.
+    pub preview: IpythonPreview,
 }
 
-pub fn ipython_tool_schema() -> serde_json::Value {
+#[must_use]
+pub fn ipython_tool_schema(preview: IpythonPreview) -> serde_json::Value {
+    let code = json!({
+        "type": "string",
+        "description": "Python code to execute in the persistent Python REPL. Use the target project's own environment for project imports, tests, scripts, CLIs, and dependency checks instead of direct kernel imports."
+    });
+    let IpythonPreview::Description { max_chars } = preview else {
+        return json!({
+            "type": "object",
+            "required": ["code"],
+            "properties": { "code": code }
+        });
+    };
+    let limit = max_chars.filter(|limit| *limit > 0);
+    let mut description = json!({
+        "type": "string",
+        "description": format!(
+            "One short sentence describing what this specific code attempts to accomplish. Describe the operation, not its outcome, and do not include code. Emit description before code so the tool-call preview can appear early.{}",
+            limit.map_or_else(String::new, |limit| format!(" Use at most {limit} characters."))
+        )
+    });
+    if let Some(limit) = limit {
+        description["maxLength"] = json!(limit);
+    }
     json!({
         "type": "object",
-        "required": ["code"],
-        "properties": {
-            "code": {
-                "type": "string",
-                "description": "Python code to execute in the persistent Python REPL. Use the target project's own environment for project imports, tests, scripts, CLIs, and dependency checks instead of direct kernel imports."
-            }
-        }
+        "required": ["description", "code"],
+        "properties": { "description": description, "code": code }
     })
 }
 
@@ -487,6 +533,7 @@ pub async fn execute_ipython(
 /// The `ipython` tool definition: exact name, schema, and description.
 #[must_use]
 pub fn create_ipython_tool_definition(_cwd: &str, options: IpythonToolOptions) -> ToolDefinition {
+    let preview = options.preview;
     let options = Arc::new(options);
     let execute: crate::tools::tool_definition::ExecuteFn = {
         let options = options;
@@ -510,7 +557,7 @@ pub fn create_ipython_tool_definition(_cwd: &str, options: IpythonToolOptions) -
             "ipython - persistent Python REPL for code, state, and bash() orchestration".to_string(),
         // The kernel is single-threaded; calls must not run in parallel.
         execution_mode: Some(ExecutionMode::Sequential),
-        parameters: ipython_tool_schema(),
+        parameters: ipython_tool_schema(preview),
         prepare_arguments: None,
         execute,
     }
@@ -519,6 +566,80 @@ pub fn create_ipython_tool_definition(_cwd: &str, options: IpythonToolOptions) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const DESCRIPTION_TEXT: &str = "One short sentence describing what this specific code attempts to accomplish. Describe the operation, not its outcome, and do not include code. Emit description before code so the tool-call preview can appear early.";
+
+    #[test]
+    fn code_preview_keeps_the_code_only_schema() {
+        assert_eq!(
+            ipython_tool_schema(IpythonPreview::Code),
+            json!({
+                "type": "object",
+                "required": ["code"],
+                "properties": { "code": {
+                    "type": "string",
+                    "description": "Python code to execute in the persistent Python REPL. Use the target project's own environment for project imports, tests, scripts, CLIs, and dependency checks instead of direct kernel imports."
+                } }
+            })
+        );
+    }
+
+    #[test]
+    fn description_preview_asks_for_the_sentence_before_the_code() {
+        let schema = ipython_tool_schema(IpythonPreview::Description { max_chars: None });
+        assert_eq!(schema["required"], json!(["description", "code"]));
+        assert_eq!(
+            schema["properties"]["description"],
+            json!({ "type": "string", "description": DESCRIPTION_TEXT })
+        );
+        assert_eq!(
+            schema["properties"]
+                .as_object()
+                .map(|properties| properties.keys().cloned().collect::<Vec<_>>()),
+            Some(vec!["description".to_string(), "code".to_string()]),
+            "description streams ahead of code"
+        );
+    }
+
+    #[test]
+    fn description_limit_reaches_the_schema() {
+        let schema = ipython_tool_schema(IpythonPreview::Description {
+            max_chars: Some(80),
+        });
+        assert_eq!(
+            schema["properties"]["description"],
+            json!({
+                "type": "string",
+                "description": format!("{DESCRIPTION_TEXT} Use at most 80 characters."),
+                "maxLength": 80
+            })
+        );
+        assert_eq!(
+            ipython_tool_schema(IpythonPreview::Description { max_chars: Some(0) }),
+            ipython_tool_schema(IpythonPreview::Description { max_chars: None }),
+            "a zero limit is no limit"
+        );
+    }
+
+    #[test]
+    fn preview_follows_the_settings() {
+        let mut settings =
+            crate::settings::SettingsManager::in_memory(&crate::settings::Settings::default());
+        assert_eq!(
+            IpythonPreview::from_settings(&settings),
+            IpythonPreview::Code
+        );
+        settings.set_tool_call_preview("description").unwrap();
+        settings
+            .set_tool_call_description_max_chars(Some(120))
+            .unwrap();
+        assert_eq!(
+            IpythonPreview::from_settings(&settings),
+            IpythonPreview::Description {
+                max_chars: Some(120)
+            }
+        );
+    }
 
     #[test]
     fn sent_agent_message_json_matches_ts_wire_shape() {

@@ -3,7 +3,7 @@
 use super::{
     default_server_capabilities, json, paths, response_failure, response_success,
     restore_queue_snapshot, session_file_name, Arc, EngineModelSelection, Result,
-    RlmSessionIdentity, SessionEngine, SessionFile, VecDeque, Worker,
+    RlmSessionIdentity, ScopeOrigin, SessionEngine, SessionFile, VecDeque, Worker,
 };
 
 use serde::Deserialize as _;
@@ -398,24 +398,26 @@ impl Worker {
         // already owns, so a cold boot's in-flight catalog fetch has had
         // its window before the scope resolves: resolving before it could
         // store an empty scope.
-        let model_patterns = match payload.get("models").and_then(Value::as_array) {
-            Some(patterns) => patterns
+        let (model_patterns, scope_origin) = if let Some(patterns) =
+            payload.get("models").and_then(Value::as_array)
+        {
+            let patterns = patterns
                 .iter()
                 .filter_map(Value::as_str)
                 .map(str::to_string)
-                .collect::<Vec<String>>(),
-            None => pa_core::settings::SettingsManager::create(&cwd, &self.config.agent_dir)
-                .get_enabled_models()
-                .unwrap_or_default(),
-        };
-        let scoped_models = if model_patterns.is_empty() {
-            Vec::new()
+                .collect::<Vec<String>>();
+            (patterns, ScopeOrigin::Session)
         } else {
-            let registry = crate::state_getters::worker_model_registry(&self.config.agent_dir);
-            let available: Vec<pa_types::ai::Model> =
-                registry.get_available().into_iter().cloned().collect();
-            pa_core::models::resolve_model_scope_from_models(&model_patterns, &available)
+            let patterns = pa_core::settings::SettingsManager::create(&cwd, &self.config.agent_dir)
+                .get_enabled_models()
+                .unwrap_or_default();
+            let origin = ScopeOrigin::Settings {
+                patterns: patterns.clone(),
+            };
+            (patterns, origin)
         };
+        let scoped_models =
+            crate::setting_switches::resolve_scope(&self.config.agent_dir, &model_patterns);
         let is_continuing = opened_existing_session;
         self.engine
             .configure_startup_scope(scoped_models.clone(), is_continuing);
@@ -460,21 +462,7 @@ impl Worker {
                 }
             }
         }
-        // The wire shape `set_scoped_models` stores (the connection state
-        // surface and the cycler's input): `{ model, thinkingLevel? }`.
-        let scoped_entries: Vec<Value> = scoped_models
-            .iter()
-            .map(|scoped| {
-                let mut entry = json!({ "model": scoped.model });
-                // The pattern's `:thinking` suffix (TS `ScopedModel`
-                // `thinkingLevel`); the wire name is the serde-lowercase
-                // level the cycler and the state readers parse back.
-                if let Some(level) = scoped.thinking_level {
-                    entry["thinkingLevel"] = json!(level);
-                }
-                entry
-            })
-            .collect();
+        let scoped_entries = crate::setting_switches::scope_wire_entries(&scoped_models);
 
         if !name_persisted_by_fresh_arm {
             if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
@@ -603,6 +591,7 @@ impl Worker {
             core.follow_up_mode.clone_from(&follow_up_mode);
             core.forced_all_steering = false;
             core.scoped_models.clone_from(&scoped_entries);
+            core.scope_origin = scope_origin;
             core.retry_abort_requested = false;
             // The session's depth falls back to the opened file's header (TS
             // `config.rlmDepth ?? header.rlmDepth`): a resumed saved subagent

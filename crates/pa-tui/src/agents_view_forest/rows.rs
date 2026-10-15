@@ -15,6 +15,7 @@ use crate::subagents::{summary_identity_keys, summary_parent_keys};
 struct BaseRow {
     kind: RowKind,
     section: Section,
+    pinned: bool,
     identity: String,
     summary: Value,
     title: String,
@@ -40,7 +41,8 @@ struct BaseRow {
 /// identities whose spawn programs render inside the open list (TS
 /// `programShownParents`); `rollups` carries the unfiltered hierarchy
 /// totals; a scope excludes its root and lifts its direct children to
-/// top-level rows.
+/// top-level rows. `pinned` holds the pinned session ids: those agents
+/// list first, ahead of every status section.
 pub(crate) fn build_rows<S: std::hash::BuildHasher + Default>(
     records: &[UnifiedRecord],
     scope: Option<&AgentsViewScope>,
@@ -48,6 +50,7 @@ pub(crate) fn build_rows<S: std::hash::BuildHasher + Default>(
     program_shown: &HashSet<String, S>,
     rollups: &HashMap<String, Rollup, S>,
     anchor: Option<&str>,
+    pinned: &HashSet<String, S>,
 ) -> Vec<AgentsViewRow> {
     let now = now_ms();
     // The scope root's keys, used to lift its direct children to
@@ -107,6 +110,10 @@ pub(crate) fn build_rows<S: std::hash::BuildHasher + Default>(
         base.push(BaseRow {
             kind,
             section: record.section,
+            pinned: summary
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .is_some_and(|session_id| pinned.contains(session_id)),
             search_score: record.search_score,
             identity: record.identity.clone(),
             title: session_title(&summary),
@@ -339,6 +346,7 @@ fn agents_row(row: &BaseRow, depth: usize, parent_identity: Option<&str>) -> Age
     AgentsViewRow {
         kind: row.kind,
         section: row.section,
+        pinned: row.pinned,
         identity: row.identity.clone(),
         parent_identity: parent_identity.map(str::to_string),
         summary: row.summary.clone(),
@@ -377,6 +385,7 @@ fn merged_summary_row(parent: &BaseRow, depth: usize, expanded: bool) -> AgentsV
     AgentsViewRow {
         kind: RowKind::SubagentSummary,
         section: parent.section,
+        pinned: parent.pinned,
         identity: format!("{SUMMARY_ROW_PREFIX}{}", parent.identity),
         parent_identity: Some(parent.identity.clone()),
         summary: parent.summary.clone(),
@@ -419,6 +428,7 @@ fn spawn_code_rows(
     let make_row = |title: &str, line_index: &str| AgentsViewRow {
         kind: RowKind::Code,
         section: parent.section,
+        pinned: parent.pinned,
         identity: format!("code:{}:{group_index}:{line_index}", parent.identity),
         parent_identity: Some(parent.identity.clone()),
         summary: parent.summary.clone(),
@@ -458,8 +468,9 @@ fn spawn_code_rows(
     rows
 }
 
-/// TS `compareAgentsViewRows`: section rank, then empty sessions sink,
-/// then recency, then title, then session id.
+/// TS `compareAgentsViewRows`: pinned first (the pinned block heads the
+/// list), section rank, then empty sessions sink, then recency, then
+/// title, then session id.
 fn compare_base(a: &BaseRow, b: &BaseRow, anchor: Option<&str>) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     fn get_str<'a>(summary: &'a Value, field: &str) -> Option<&'a str> {
@@ -496,6 +507,12 @@ fn compare_base(a: &BaseRow, b: &BaseRow, anchor: Option<&str>) -> std::cmp::Ord
     if a.search_score.is_some() != b.search_score.is_some() {
         // The scored hit renders before the retained ancestor.
         return b.search_score.is_some().cmp(&a.search_score.is_some());
+    }
+    // Pinned agents lead the whole list; the status rank orders them
+    // (and everything else) after that.
+    let pinned = b.pinned.cmp(&a.pinned);
+    if pinned != Ordering::Equal {
+        return pinned;
     }
     let section = section_rank(a.section).cmp(&section_rank(b.section));
     if section != Ordering::Equal {

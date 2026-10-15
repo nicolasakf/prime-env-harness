@@ -3,10 +3,11 @@
 //! renderers, the cell/truncate helpers, and the terminal/
 //! headless renderer (moved with their concern).
 use super::{
-    build_layout, mpsc, pad_line, section_title, str_width, truncate_text, AgentsStep,
+    build_layout, display_section_title, mpsc, pad_line, str_width, truncate_text, AgentsStep,
     AgentsViewMode, AgentsViewRow, AgentsViewUiMode, Composer, Duration, Line, Result, RowKind,
-    RowLayout, Section, Theme, ThemeColor, UiInput,
+    RowLayout, Section, Theme, ThemeColor, UiInput, DISPLAY_SECTIONS,
 };
+use crate::agents_view_state::DisplaySection;
 
 impl AgentsViewMode {
     /// Compose one frame (splash, search prompt, sectioned list, hints).
@@ -301,7 +302,7 @@ impl AgentsViewMode {
         /// click surface's row identity).
         enum DisplayItem<'a> {
             Spacer,
-            Heading(Section),
+            Heading(DisplaySection),
             Row(usize, &'a AgentsViewRow),
         }
         // The click surface records this render's visible rows; the
@@ -318,18 +319,20 @@ impl AgentsViewMode {
             };
             return vec![vec![self.theme.fg(ThemeColor::Dim, text.to_string())]];
         }
-        let layout = build_layout(&self.rows, width);
+        let layout = build_layout(&self.rows, &self.environment_runs, width);
         // The display-item sequence (TS `displayItems`): each non-empty
         // section contributes a spacer (when not first), its heading, then
         // its rows.
-        let counts: Vec<(Section, usize)> = [Section::Running, Section::Idle, Section::Inactive]
+        let counts: Vec<(DisplaySection, usize)> = DISPLAY_SECTIONS
             .into_iter()
             .map(|section| {
                 (
                     section,
                     self.rows
                         .iter()
-                        .filter(|row| row.kind == RowKind::Agent && row.section == section)
+                        .filter(|row| {
+                            row.kind == RowKind::Agent && row.display_section() == section
+                        })
                         .count(),
                 )
             })
@@ -351,7 +354,7 @@ impl AgentsViewMode {
                 let mut include = false;
                 for (index, row) in self.rows.iter().enumerate() {
                     if row.depth == 0 {
-                        include = row.kind == RowKind::Agent && row.section == *section;
+                        include = row.kind == RowKind::Agent && row.display_section() == *section;
                     }
                     if include {
                         display.push(DisplayItem::Row(index, row));
@@ -413,7 +416,10 @@ impl AgentsViewMode {
                         .map_or(0, |(_, count)| *count);
                     lines.push(vec![self.theme.fg(
                         ThemeColor::Muted,
-                        truncate_text(&format!("{} ({count})", section_title(*section)), width),
+                        truncate_text(
+                            &format!("{} ({count})", display_section_title(*section)),
+                            width,
+                        ),
                     )]);
                 }
                 DisplayItem::Row(index, row) => {
@@ -475,7 +481,7 @@ impl AgentsViewMode {
 
     /// One session row (TS `renderRow`): the summary rows render their
     /// `▸/▾ title` cell over the full width; agent rows render icon, title
-    /// (nested rows indented), model, cost/age. The selected row
+    /// (nested rows indented), model, environments, cost/age. The selected row
     /// carries the selection background; a hovered unselected row
     /// carries the light hover band (operator directive 2026-09-29: the
     /// row is clickable — every row, the summaries and the nested
@@ -517,7 +523,7 @@ impl AgentsViewMode {
             // aggregate rides the same right-aligned `${:.2}` cell the
             // agent rows print, leaving the Age column blank behind it.
             if crate::agents_view_forest::is_summary_row_identity(&row.identity) {
-                let zone = layout.name_width + 2 + layout.model_width;
+                let zone = layout.leading_zone_width();
                 let title = crate::agents_view_state::truncate_text(&text, zone);
                 let pad = zone.saturating_sub(str_width(&title));
                 let line: Line = vec![
@@ -590,11 +596,35 @@ impl AgentsViewMode {
             "  ".to_string(),
             ratatui::style::Style::default(),
         ));
-        line.push(theme.fg(ThemeColor::Muted, cell(&row.model, layout.model_width)));
-        line.push(crate::Span::styled(
-            "  ".to_string(),
-            ratatui::style::Style::default(),
-        ));
+        if layout.model_width > 0 {
+            line.push(theme.fg(ThemeColor::Muted, cell(&row.model, layout.model_width)));
+            line.push(crate::Span::styled(
+                "  ".to_string(),
+                ratatui::style::Style::default(),
+            ));
+        }
+        if layout.environments_width > 0 {
+            let environments = layout
+                .environments
+                .get(&row.identity)
+                .copied()
+                .unwrap_or_default()
+                .line(theme);
+            let environments =
+                crate::width::truncate_line(&environments, layout.environments_width, "");
+            let used: usize = environments
+                .iter()
+                .map(|span| str_width(&span.content))
+                .sum();
+            line.extend(environments);
+            line.push(crate::Span::raw(
+                " ".repeat(layout.environments_width.saturating_sub(used)),
+            ));
+            line.push(crate::Span::styled(
+                "  ".to_string(),
+                ratatui::style::Style::default(),
+            ));
+        }
         let details = layout
             .details
             .get(&row.identity)
@@ -758,6 +788,18 @@ impl AgentsViewMode {
             if let Some(keys) = all("app.agents.rename").filter(|_| self.rename_target().is_some())
             {
                 segments.push(format!("{keys} rename"));
+            }
+            // The pin slot: only on a pinnable agent row, naming the
+            // action the key would take.
+            if let Some(keys) = all("app.agents.pin")
+                .filter(|_| self.options.client_settings.is_some() && self.pin_target().is_some())
+            {
+                let word = if self.rows.get(self.selected).is_some_and(|row| row.pinned) {
+                    "unpin"
+                } else {
+                    "pin"
+                };
+                segments.push(format!("{keys} {word}"));
             }
             // The reply slot (the operator's completeness directive: TS
             // shows none — the space arm is undiscoverable without it):

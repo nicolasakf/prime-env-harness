@@ -414,6 +414,10 @@ pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
         def!(&["ctrl+r"], "Rename selected agent session"),
     ),
     (
+        "app.agents.pin",
+        def!(&["alt+p"], "Pin or unpin selected agent session"),
+    ),
+    (
         "app.agents.expand",
         def!(
             &["alt+right"],

@@ -293,6 +293,13 @@ pub enum McpServerConfig {
     },
 }
 
+/// The model `titleModel` names: a provider plus a model id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TitleModelSetting {
+    pub provider: String,
+    pub id: String,
+}
+
 /// The settings document: every known field optional; unknown keys preserved.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -301,6 +308,9 @@ pub struct Settings {
     pub onboarding_completed: Option<bool>,
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
+    /// Model that generates conversation titles (unset: no automatic
+    /// titles; `/name` with no argument reports the missing setting).
+    pub title_model: Option<TitleModelSetting>,
     pub subagent_default_model: Option<String>,
     pub update_channel: Option<UpdateChannel>,
     pub recent_models: Option<Vec<String>>,
@@ -367,6 +377,12 @@ pub struct Settings {
     /// cycles and persists ("overview"/"details"/"all"); `None` reads
     /// as the `overview` startup level (the collapse mode).
     pub chat_detail: Option<String>,
+    /// How ipython tool calls preview in the transcript: `code` (default)
+    /// or `description` (the model adds a short description argument).
+    pub tool_call_preview: Option<String>,
+    /// Character limit the description-mode schema asks the model to
+    /// respect; unset or non-positive means no limit.
+    pub tool_call_description_max_chars: Option<u64>,
     pub thinking_budgets: Option<ThinkingBudgetsSettings>,
     pub editor_padding_x: Option<u64>,
     pub autocomplete_max_visible: Option<u64>,
@@ -374,6 +390,9 @@ pub struct Settings {
     pub markdown: Option<MarkdownSettings>,
     pub warnings: Option<WarningSettings>,
     pub session_dir: Option<String>,
+    /// Agents-view pins (global scope only), ordered by when they were
+    /// pinned.
+    pub pinned_session_ids: Option<Vec<String>>,
     /// Log per-request provider timing phases to the diagnostic log (TS
     /// `requestTiming`; unset means OFF, exactly the TS default).
     pub request_timing: Option<bool>,

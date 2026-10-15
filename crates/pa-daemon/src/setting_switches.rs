@@ -14,10 +14,43 @@ use pa_types::ai::{ServiceTier, Transport};
 
 use crate::engine::EngineModelSelection;
 use crate::protocol::{response_failure, response_success, DaemonResponse};
-use crate::worker::Worker;
+use crate::worker::{ScopeOrigin, Worker};
 
 /// The queue-mode wire vocabulary (TS `AgentConnectionQueueMode`).
 const QUEUE_MODES: &[&str] = &["all", "one-at-a-time"];
+
+/// Resolve scope patterns (`provider/id[:thinking]`) against the models
+/// available to this worker; empty patterns resolve to an empty scope.
+pub(crate) fn resolve_scope(
+    agent_dir: &std::path::Path,
+    patterns: &[String],
+) -> Vec<pa_core::models::ScopedModel> {
+    if patterns.is_empty() {
+        return Vec::new();
+    }
+    let registry = crate::state_getters::worker_model_registry(agent_dir);
+    let available: Vec<pa_types::ai::Model> =
+        registry.get_available().into_iter().cloned().collect();
+    pa_core::models::resolve_model_scope_from_models(patterns, &available)
+}
+
+/// The wire shape `set_scoped_models` stores (the connection state surface
+/// and the cycler's input): `{ model, thinkingLevel? }`.
+pub(crate) fn scope_wire_entries(scoped: &[pa_core::models::ScopedModel]) -> Vec<Value> {
+    scoped
+        .iter()
+        .map(|scoped| {
+            let mut entry = json!({ "model": scoped.model });
+            // The pattern's `:thinking` suffix (TS `ScopedModel`
+            // `thinkingLevel`); the wire name is the serde-lowercase level
+            // the cycler and the state readers parse back.
+            if let Some(level) = scoped.thinking_level {
+                entry["thinkingLevel"] = json!(level);
+            }
+            entry
+        })
+        .collect()
+}
 
 /// TS `supportsServiceTier` as the worker sees it: the engine's resolved
 /// model metadata (provider, api, id) against the shared pa-types
@@ -80,6 +113,7 @@ impl Worker {
         if let Err(response) = self.require_created("cycle_model") {
             return response;
         }
+        self.refresh_settings_scope();
         // Same serialization as `set_model`: the cycle's model switch and
         // tier re-clamp run under the replacement gate.
         let _replacement_gate = self.replacement_gate.lock().await;
@@ -317,6 +351,32 @@ impl Worker {
         self.clamp_service_tier_for_model();
     }
 
+    /// Bring a settings-sourced scope up to date with the saved
+    /// `enabledModels`, so a pin made in another session reaches this one
+    /// without a restart. A scope chosen for this session alone is left
+    /// alone, and an unchanged setting costs one settings read and no model
+    /// registry load.
+    pub(crate) fn refresh_settings_scope(&self) {
+        let cwd = self.core.lock().unwrap().cwd.clone();
+        let patterns = pa_core::settings::SettingsManager::create(&cwd, &self.config.agent_dir)
+            .get_enabled_models()
+            .unwrap_or_default();
+        let held = self.core.lock().unwrap().scope_origin.clone();
+        let ScopeOrigin::Settings { patterns: held } = held else {
+            return;
+        };
+        if held == patterns {
+            return;
+        }
+        let entries = scope_wire_entries(&resolve_scope(&self.config.agent_dir, &patterns));
+        let mut core = self.core.lock().unwrap();
+        // A scope change landed while the models resolved: it wins.
+        if core.scope_origin == (ScopeOrigin::Settings { patterns: held }) {
+            core.scoped_models = entries;
+            core.scope_origin = ScopeOrigin::Settings { patterns };
+        }
+    }
+
     /// `set_scoped_models { scopedModels }` (TS
     /// `session.setScopedModels`): store the scoped model list the cycler
     /// and the connection state surface.
@@ -366,7 +426,7 @@ impl Worker {
         // `persist: true` (the model picker's scope key) also saves the list
         // as the `enabledModels` patterns the next session resolves its
         // scope from; an empty list clears the filter.
-        if payload.get("persist").and_then(Value::as_bool) == Some(true) {
+        let saved_patterns = if payload.get("persist").and_then(Value::as_bool) == Some(true) {
             let patterns: Vec<String> = scoped
                 .iter()
                 .filter_map(|entry| {
@@ -388,12 +448,21 @@ impl Worker {
             );
             let mut settings = pa_core::settings::SettingsManager::create(&cwd, agent_dir);
             if let Err(error) =
-                settings.set_enabled_models((!patterns.is_empty()).then_some(patterns))
+                settings.set_enabled_models((!patterns.is_empty()).then(|| patterns.clone()))
             {
                 return response_failure(None, "set_scoped_models", &error.to_string(), None);
             }
-        }
-        self.core.lock().unwrap().scoped_models.clone_from(scoped);
+            Some(patterns)
+        } else {
+            None
+        };
+        let mut core = self.core.lock().unwrap();
+        core.scoped_models.clone_from(scoped);
+        core.scope_origin = match saved_patterns {
+            Some(patterns) => ScopeOrigin::Settings { patterns },
+            None => ScopeOrigin::Session,
+        };
+        drop(core);
         response_success(None, "set_scoped_models", None)
     }
 
@@ -1101,6 +1170,102 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&settings_path).expect("settings file"))
                 .expect("settings json");
         assert_eq!(saved["enabledModels"], Value::Null, "the filter is cleared");
+    }
+
+    /// A worker on the real engine with two models available, created with
+    /// the given extra create fields.
+    async fn scope_worker(create: Value) -> Arc<Worker> {
+        let dir = std::env::temp_dir().join(format!("pa-worker-scope-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        models_fixture(&dir, 2);
+        let mut config = worker_config(&dir);
+        config.script = None;
+        let worker = Arc::new(Worker::new(config, None));
+        let mut payload = json!({ "noSession": true, "cwd": dir });
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(create.as_object().cloned().unwrap_or_default());
+        let created = worker.dispatch("create", &payload).await;
+        assert!(created.success, "create failed: {created:?}");
+        worker
+    }
+
+    async fn scoped_model_ids(worker: &Worker) -> Vec<String> {
+        let state = worker
+            .dispatch(
+                "get_connection_state",
+                &json!({ "activeSessionId": "switch-session" }),
+            )
+            .await;
+        state.data.expect("data")["scopedModels"]
+            .as_array()
+            .expect("scopedModels")
+            .iter()
+            .map(|entry| {
+                entry["model"]["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// A session whose scope came from `enabledModels` picks up a pin saved
+    /// afterwards (by another session) the next time its state is read; a
+    /// session given its own scope keeps it.
+    #[tokio::test]
+    async fn settings_scope_follows_enabled_models_but_session_scope_does_not() {
+        let follows = scope_worker(json!({})).await;
+        let own = scope_worker(json!({ "models": ["prime-inference/mock-1"] })).await;
+        assert_eq!(scoped_model_ids(&follows).await, Vec::<String>::new());
+
+        for worker in [&follows, &own] {
+            std::fs::write(
+                worker.config.agent_dir.join("settings.json"),
+                json!({ "enabledModels": ["prime-inference/mock-2"] }).to_string(),
+            )
+            .unwrap();
+        }
+        assert_eq!(scoped_model_ids(&follows).await, vec!["mock-2"]);
+        assert_eq!(scoped_model_ids(&own).await, vec!["mock-1"]);
+    }
+
+    /// A scope change made in the session without saving it detaches the
+    /// session from `enabledModels`; saving it re-attaches.
+    #[tokio::test]
+    async fn unsaved_scope_change_detaches_from_enabled_models() {
+        let worker = scope_worker(json!({})).await;
+        let scoped = |id: &str| json!([{ "model": { "provider": "prime-inference", "id": id } }]);
+        worker
+            .dispatch(
+                "set_scoped_models",
+                &json!({ "activeSessionId": "switch-session", "scopedModels": scoped("mock-1") }),
+            )
+            .await;
+        std::fs::write(
+            worker.config.agent_dir.join("settings.json"),
+            json!({ "enabledModels": ["prime-inference/mock-2"] }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(scoped_model_ids(&worker).await, vec!["mock-1"]);
+
+        worker
+            .dispatch(
+                "set_scoped_models",
+                &json!({
+                    "activeSessionId": "switch-session",
+                    "scopedModels": scoped("mock-1"),
+                    "persist": true,
+                }),
+            )
+            .await;
+        std::fs::write(
+            worker.config.agent_dir.join("settings.json"),
+            json!({ "enabledModels": ["prime-inference/mock-2"] }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(scoped_model_ids(&worker).await, vec!["mock-2"]);
     }
 
     /// `cycle_thinking_level` without a reasoning model answers success

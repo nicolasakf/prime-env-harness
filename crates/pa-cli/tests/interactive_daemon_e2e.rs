@@ -3305,8 +3305,8 @@ fn base_options(
 
 /// `/name` and its `/rename` alias (TS `handleNameCommand`): the rename
 /// travels to the daemon, the session file persists the `session_info`
-/// entry (the #188/#194 rename machinery), and the no-argument form reports
-/// the current name.
+/// entry (the #188/#194 rename machinery), and the no-argument form asks the
+/// daemon for a generated name (refused here: no title model is configured).
 #[tokio::test]
 async fn tui_renames_session_through_slash_command() {
     let dir = tempfile::TempDir::new().expect("temp dir");
@@ -3324,9 +3324,13 @@ async fn tui_renames_session_through_slash_command() {
             // Set through the alias: /rename resolves to /name.
             pa_tui::interactive::HeadlessStep::Submit("/rename my session".to_string()),
             pa_tui::interactive::HeadlessStep::WaitIdle { timeout_ms: 30_000 },
-            // The no-argument form reports the current name.
+            // The no-argument form asks for a generated name.
             pa_tui::interactive::HeadlessStep::Submit("/name".to_string()),
             pa_tui::interactive::HeadlessStep::WaitIdle { timeout_ms: 30_000 },
+            pa_tui::interactive::HeadlessStep::WaitRender {
+                needle: "No conversation title model is configured".to_string(),
+                timeout_ms: 30_000,
+            },
         ],
         width: 120,
         height: 36,
@@ -3350,8 +3354,8 @@ async fn tui_renames_session_through_slash_command() {
         "the /rename status row rendered:\n{rendered}"
     );
     assert!(
-        rendered.contains("Session name: my session"),
-        "the /name report row rendered:\n{rendered}"
+        rendered.contains("No conversation title model is configured. Set one in /settings."),
+        "the /name refusal row rendered:\n{rendered}"
     );
     // The #188/#194 persistence: the session file carries the session_info
     // entry with the name.

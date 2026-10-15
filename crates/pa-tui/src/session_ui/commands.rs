@@ -6,7 +6,7 @@ use super::{
     create_session, effort_picker, info_commands, terminal_columns, AgentView, AuthSelectorKind,
     ChatEntry, CommandCatalogUpdate, DaemonCommand, DockFold, Duration, InfoContent, Map,
     PendingConfirm, RebuildKind, Result, SessionUi, SlashCommandExecution, SlashCommandRegistry,
-    StatusKind, SubmitBehavior, Value, UI_REQUEST_TIMEOUT_MS,
+    StatusKind, SubmitBehavior, Value, GENERATE_TITLE_TIMEOUT_MS, UI_REQUEST_TIMEOUT_MS,
 };
 
 impl SessionUi {
@@ -509,7 +509,7 @@ impl SessionUi {
                 // The message is hand-wrapped to fit the panel rows (the
                 // confirm renders each line truncated, never wrapped).
                 view.confirm = Some(crate::confirm::ConfirmPanel::yes_no(
-                    "Update Prime Agent",
+                    "Update Prime Env",
                     "Update uninstalls the TypeScript version and installs the latest Rust build;\nyour sessions and configuration (~/.prime/agent) are never touched.\n\nThe update runs in the background — restart prime-agent after it\nfinishes to run the new build.",
                 ));
                 self.pending_confirm = Some(PendingConfirm::Update);
@@ -787,17 +787,53 @@ impl SessionUi {
                 self.start_side_question(&resolved.args, view).await?;
             }
             // `/name` (TS `handleNameCommand`; `/rename` resolves to it):
-            // a missing argument reports the current name, otherwise the
-            // rename travels to the daemon (`set_session_name` persists
-            // the `session_info` entry and broadcasts the change).
+            // an argument renames the session (`set_session_name` persists
+            // the `session_info` entry and broadcasts the change); no
+            // argument asks the daemon to generate a name with the title
+            // model (`generate_session_title`, capability-gated).
             "name" => {
                 self.track_command_used("name");
                 let name = resolved.args.trim();
                 if name.is_empty() {
-                    match &self.session_name {
-                        Some(current) => self.note(&format!("Session name: {current}"), view),
-                        None => self.note_as("Usage: /name <name>", StatusKind::Warning, view),
+                    if !self
+                        .client
+                        .supports_server_capability("generate_session_title")
+                    {
+                        self.error_row(
+                            "the daemon is running an older build; restart the daemon and try again",
+                            view,
+                        );
+                        return Ok(());
                     }
+                    self.note("Generating session name...", view);
+                    // The model call outlasts the UI request cap: the
+                    // outcome lands as a status row through the background
+                    // notes, and the daemon's `session_info_changed`
+                    // updates the chrome.
+                    let client = self.client.clone();
+                    let active_session_id = self.active_session_id.clone();
+                    let notes = self.notes.clone();
+                    tokio::spawn(async move {
+                        let request = client.request_ok(DaemonCommand::GenerateSessionTitle {
+                            id: None,
+                            active_session_id,
+                            rest: Map::default(),
+                        });
+                        let note = match tokio::time::timeout(
+                            Duration::from_millis(GENERATE_TITLE_TIMEOUT_MS),
+                            request,
+                        )
+                        .await
+                        {
+                            Ok(Ok(data)) => data.get("name").and_then(Value::as_str).map_or_else(
+                                || "Generated a session name".to_string(),
+                                |generated| format!("Session name set: {generated}"),
+                            ),
+                            Ok(Err(error)) => format!("{error:#}"),
+                            Err(_) => "Timed out generating the session name".to_string(),
+                        };
+                        let _ = notes.send(note);
+                    });
                     return Ok(());
                 }
                 match self

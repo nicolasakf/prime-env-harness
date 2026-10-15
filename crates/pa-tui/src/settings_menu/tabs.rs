@@ -36,11 +36,17 @@ const TAB_LAYOUT: &[TabLayout] = &[
             "follow-up-mode",
             "quiet-startup",
             "warnings",
+            "open-settings-file",
         ],
     },
     TabLayout {
         name: "Models",
-        ids: &["thinking", "transport", "default-service-tier"],
+        ids: &[
+            "thinking",
+            "transport",
+            "default-service-tier",
+            "title-model",
+        ],
     },
     TabLayout {
         name: "Display",
@@ -52,6 +58,8 @@ const TAB_LAYOUT: &[TabLayout] = &[
             "auto-resize-images",
             "block-images",
             "mermaid-rendering",
+            "tool-call-preview",
+            "tool-call-description-max-chars",
         ],
     },
     TabLayout {

@@ -47,6 +47,23 @@ pub enum SettingsSubmenu {
     /// "Default Service Tier" (TS `SERVICE_TIER_OPTIONS`: default/flex/
     /// priority/auto with their descriptions).
     ServiceTier,
+    /// "Conversation title model": `none` plus the available models
+    /// (`provider/id`), filtered by the text typed in the submenu.
+    TitleModel { models: Vec<String> },
+}
+
+/// The option every title-model list leads with: no automatic titles.
+pub const TITLE_MODEL_NONE: &str = "none";
+
+/// The title-model submenu's options for a typed filter: `none` plus the
+/// models whose reference contains the query (case-insensitive); `none`
+/// stays listed only while the query matches it.
+fn title_model_options(models: &[String], query: &str) -> Vec<String> {
+    let query = query.to_lowercase();
+    std::iter::once(TITLE_MODEL_NONE.to_string())
+        .chain(models.iter().cloned())
+        .filter(|option| option.to_lowercase().contains(&query))
+        .collect()
 }
 
 /// The service-tier descriptions the TS settings submenu lists (TS
@@ -65,7 +82,8 @@ pub fn service_tier_description(tier: &str) -> &'static str {
 /// The settings-row and autocomplete choice order (TS `SERVICE_TIER_CHOICES`).
 pub const SERVICE_TIER_CHOICES: [&str; 4] = ["default", "flex", "priority", "auto"];
 
-/// One settings row (TS `SettingItem`).
+/// One settings row (TS `SettingItem`). A row with neither `values` nor a
+/// `submenu` is an action row: Enter/Space reports [`SettingsMenuAction::Activate`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsMenuRow {
     pub id: &'static str,
@@ -73,7 +91,7 @@ pub struct SettingsMenuRow {
     pub description: &'static str,
     /// The displayed current value (right side).
     pub current: String,
-    /// The values Enter/Space cycles through (`None` = submenu row).
+    /// The values Enter/Space cycles through (`None` = submenu or action row).
     pub values: Option<Vec<String>>,
     pub submenu: Option<SettingsSubmenu>,
 }
@@ -86,6 +104,10 @@ pub enum SettingsMenuAction {
     None,
     /// Esc from the top level (TS `onCancel`).
     Cancel,
+    /// Enter/Space on an action row (TS `SettingItem.action`).
+    Activate {
+        id: &'static str,
+    },
     /// Enter/Space changed a row (or a submenu selected a value).
     Change {
         id: &'static str,
@@ -110,6 +132,8 @@ struct SubmenuState {
     row: usize,
     kind: SettingsSubmenu,
     selected: usize,
+    /// The typed filter of a searchable submenu (the title-model list).
+    query: String,
 }
 
 /// The settings menu (TS `SettingsList` with `enableSearch`, grouped into
@@ -156,6 +180,19 @@ pub fn settings_menu_rows(current: &SettingsCurrentValues) -> Vec<SettingsMenuRo
             idle_values[1..].sort_by_key(|value| value.parse::<u32>().unwrap_or(0));
         }
     }
+    // The description limits the row cycles through; a configured limit
+    // outside the presets joins them in order.
+    let mut limits: Vec<u64> = vec![40, 80, 120, 160, 240];
+    if let Some(configured) = current
+        .tool_call_description_max_chars
+        .filter(|configured| !limits.contains(configured))
+    {
+        limits.push(configured);
+        limits.sort_unstable();
+    }
+    let limit_values: Vec<String> = std::iter::once(DESCRIPTION_LIMIT_NONE.to_string())
+        .chain(limits.iter().map(ToString::to_string))
+        .collect();
     vec![
         SettingsMenuRow {
             id: "autocompact",
@@ -310,6 +347,48 @@ pub fn settings_menu_rows(current: &SettingsCurrentValues) -> Vec<SettingsMenuRo
             submenu: None,
         },
         SettingsMenuRow {
+            id: "title-model",
+            label: "Conversation title model",
+            description: "Names new top-level conversations and powers /name with no argument; none disables automatic titles",
+            current: current
+                .title_model
+                .clone()
+                .unwrap_or_else(|| TITLE_MODEL_NONE.to_string()),
+            values: None,
+            submenu: Some(SettingsSubmenu::TitleModel {
+                models: current.available_title_models.clone(),
+            }),
+        },
+        SettingsMenuRow {
+            id: "tool-call-preview",
+            label: "Tool call preview",
+            description: "IPython code preview or a short model-written description; applies to new sessions",
+            current: current.tool_call_preview.clone(),
+            values: Some(vec![
+                TOOL_CALL_PREVIEW_CODE.to_string(),
+                TOOL_CALL_PREVIEW_DESCRIPTION.to_string(),
+            ]),
+            submenu: None,
+        },
+        SettingsMenuRow {
+            id: "tool-call-description-max-chars",
+            label: "Tool description max chars",
+            description: "Optional character limit asked of the model in description mode; applies to new sessions",
+            current: current
+                .tool_call_description_max_chars
+                .map_or_else(|| DESCRIPTION_LIMIT_NONE.to_string(), |limit| limit.to_string()),
+            values: Some(limit_values),
+            submenu: None,
+        },
+        SettingsMenuRow {
+            id: "open-settings-file",
+            label: "Open settings.json",
+            description: "Open the global settings file with the default application",
+            current: String::new(),
+            values: None,
+            submenu: None,
+        },
+        SettingsMenuRow {
             id: "warnings",
             label: "Warnings",
             description: "Enable or disable individual warnings",
@@ -340,6 +419,13 @@ pub fn settings_menu_rows(current: &SettingsCurrentValues) -> Vec<SettingsMenuRo
     ]
 }
 
+/// The tool-call-preview row's two displayed values.
+pub const TOOL_CALL_PREVIEW_CODE: &str = "Code preview";
+pub const TOOL_CALL_PREVIEW_DESCRIPTION: &str = "Short description";
+
+/// The description-limit row's value for "no limit".
+pub const DESCRIPTION_LIMIT_NONE: &str = "none";
+
 /// The row values the menu opens with: the daemon state (autocompact,
 /// steering/follow-up, thinking) plus the settings seam reads.
 #[derive(Debug, Clone, Default)]
@@ -368,6 +454,13 @@ pub struct SettingsCurrentValues {
     pub available_thinking_levels: Vec<String>,
     pub theme: String,
     pub available_themes: Vec<String>,
+    /// The configured title model (`provider/id`); `None` shows `none`.
+    pub title_model: Option<String>,
+    /// The `provider/id` references the title-model submenu lists.
+    pub available_title_models: Vec<String>,
+    /// [`TOOL_CALL_PREVIEW_CODE`] or [`TOOL_CALL_PREVIEW_DESCRIPTION`].
+    pub tool_call_preview: String,
+    pub tool_call_description_max_chars: Option<u64>,
 }
 
 impl SettingsMenu {
@@ -519,14 +612,22 @@ impl SettingsMenu {
                     .iter()
                     .position(|tier| *tier == row.current)
                     .unwrap_or(0),
+                SettingsSubmenu::TitleModel { models } => title_model_options(models, "")
+                    .iter()
+                    .position(|option| *option == row.current)
+                    .unwrap_or(0),
                 _ => 0,
             };
             self.sub = Some(SubmenuState {
                 row: row_index,
                 kind,
                 selected,
+                query: String::new(),
             });
             return SettingsMenuAction::None;
+        }
+        if row.values.is_none() {
+            return SettingsMenuAction::Activate { id: row.id };
         }
         self.cycle_selected(1)
     }
@@ -572,6 +673,7 @@ impl SettingsMenu {
             SettingsSubmenu::Theme { themes } => themes.len(),
             SettingsSubmenu::Warnings => 1,
             SettingsSubmenu::ServiceTier => SERVICE_TIER_CHOICES.len(),
+            SettingsSubmenu::TitleModel { models } => title_model_options(models, &sub.query).len(),
         };
         if kb.matches(key, "tui.select.up") {
             if options > 0 {
@@ -627,6 +729,13 @@ impl SettingsMenu {
                         id: row_id,
                         value: tier.to_string(),
                     }),
+                SettingsSubmenu::TitleModel { models } => title_model_options(models, &sub.query)
+                    .into_iter()
+                    .nth(sub.selected)
+                    .map(|option| SettingsMenuAction::Change {
+                        id: row_id,
+                        value: option,
+                    }),
             };
             // TS `done(value)` closes the submenu and updates the row's
             // displayed value; the caller keeps its selected index (the
@@ -643,6 +752,18 @@ impl SettingsMenu {
             // Theme: Esc restores the row's theme (TS `onThemePreview` with
             // the previous value); every submenu just goes back.
             return self.submenu_cancel(sub);
+        }
+        // The searchable submenu takes printable keys as its filter.
+        if matches!(sub.kind, SettingsSubmenu::TitleModel { .. }) {
+            if key == "backspace" {
+                sub.query.pop();
+                sub.selected = 0;
+            } else if let [character] = key.chars().collect::<Vec<char>>()[..] {
+                if !character.is_control() {
+                    sub.query.push(character);
+                    sub.selected = 0;
+                }
+            }
         }
         SettingsMenuAction::None
     }
@@ -843,6 +964,14 @@ impl SettingsMenu {
                         .map(|tier| (tier.to_string(), Some(service_tier_description(tier))))
                         .collect(),
                 ),
+                SettingsSubmenu::TitleModel { models } => (
+                    "Conversation Title Model",
+                    "Select a model for automatic top-level conversation titles",
+                    title_model_options(models, &sub.query)
+                        .into_iter()
+                        .map(|option| (option, None))
+                        .collect(),
+                ),
             };
         let mut lines: Vec<crate::Line> = Vec::new();
         // The top bar the menu's list view opens with — the full-width
@@ -873,6 +1002,24 @@ impl SettingsMenu {
             ));
         }
         lines.push(Vec::new());
+        if matches!(sub.kind, SettingsSubmenu::TitleModel { .. }) {
+            lines.push(crate::width::truncate_line(
+                &vec![
+                    crate::Span::raw("  ".to_string()),
+                    theme.fg_span(ThemeColor::Dim, format!("Search: {}", sub.query)),
+                ],
+                width,
+                "",
+            ));
+            lines.push(Vec::new());
+            if options.is_empty() {
+                lines.push(crate::menu_panel::no_match_row(
+                    theme,
+                    width,
+                    "No matching models",
+                ));
+            }
+        }
         let max_visible = options.len().min(10);
         let start = sub
             .selected
@@ -894,7 +1041,13 @@ impl SettingsMenu {
             ));
         }
         lines.push(Vec::new());
-        lines.push(hint_row(theme, width, &submenu_hint(kb)));
+        let hint = submenu_hint(kb);
+        let hint = if matches!(sub.kind, SettingsSubmenu::TitleModel { .. }) {
+            format!("Type to search · {hint}")
+        } else {
+            hint
+        };
+        lines.push(hint_row(theme, width, &hint));
         lines
     }
 }

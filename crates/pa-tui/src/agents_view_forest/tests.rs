@@ -52,6 +52,7 @@ fn rows_for(
         &HashSet::default(),
         &rollups,
         None,
+        &HashSet::default(),
     )
 }
 
@@ -608,6 +609,7 @@ fn saved_child_nests_under_its_saved_parent() {
         &HashSet::default(),
         &rollups,
         None,
+        &HashSet::default(),
     );
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].kind, RowKind::Agent);
@@ -621,6 +623,7 @@ fn saved_child_nests_under_its_saved_parent() {
         &HashSet::default(),
         &rollups,
         None,
+        &HashSet::default(),
     );
     assert_eq!(rows[2].title, "saved child");
     assert_eq!(rows[2].kind, RowKind::Subagent);
@@ -815,6 +818,7 @@ fn rollups_sum_costs_over_descendants_only() {
         &HashSet::default(),
         &empty,
         None,
+        &HashSet::default(),
     );
     // Without rollups the per-pass walk fills the same totals.
     assert!((rows[0].cost - 0.75).abs() < f64::EPSILON);
@@ -887,6 +891,7 @@ fn an_active_query_ranks_hits_globally_ancestors_sink_last() {
         &HashSet::default(),
         &rollups,
         None,
+        &HashSet::default(),
     );
     let titles: Vec<&str> = rows.iter().map(|row| row.title.as_str()).collect();
     assert_eq!(
@@ -963,6 +968,7 @@ fn equal_scores_break_ties_by_recency_not_section() {
         &HashSet::default(),
         &rollups,
         None,
+        &HashSet::default(),
     );
     assert_eq!(
         rows[0].title, "sweep beta",
@@ -1053,6 +1059,7 @@ fn the_summary_line_bills_the_deleted_descendant_bucket() {
         &HashSet::new(),
         &rollups,
         None,
+        &HashSet::default(),
     );
     let summary = rows
         .iter()

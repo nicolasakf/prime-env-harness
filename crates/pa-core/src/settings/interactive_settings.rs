@@ -6,6 +6,7 @@
 use anyhow::{anyhow, Result};
 
 use super::manager::SettingsManager;
+use super::types::TitleModelSetting;
 
 impl SettingsManager {
     /// `terminal.showImages` setter (the getter lives with the manager's
@@ -369,5 +370,78 @@ impl SettingsManager {
     pub fn set_enabled_models(&mut self, models: Option<Vec<String>>) -> Result<()> {
         self.global_mut().enabled_models = models;
         self.save_global_scope()
+    }
+
+    /// `titleModel` setter; `None` clears it. Writes the global scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the provider or id is blank or the global
+    /// settings scope cannot be saved.
+    pub fn set_title_model(&mut self, model: Option<TitleModelSetting>) -> Result<()> {
+        let model = model
+            .map(|model| {
+                let provider = model.provider.trim().to_string();
+                let id = model.id.trim().to_string();
+                if provider.is_empty() || id.is_empty() {
+                    return Err(anyhow!("Title model provider and ID must be non-empty"));
+                }
+                Ok(TitleModelSetting { provider, id })
+            })
+            .transpose()?;
+        self.global_mut().title_model = model;
+        self.save_global_scope()
+    }
+
+    /// `toolCallPreview` setter (`code` or `description`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the mode is unknown or the global settings
+    /// scope cannot be saved.
+    pub fn set_tool_call_preview(&mut self, mode: &str) -> Result<()> {
+        if !matches!(mode, "code" | "description") {
+            return Err(anyhow!("Unknown tool call preview mode: {mode}"));
+        }
+        self.global_mut().tool_call_preview = Some(mode.to_string());
+        self.save_global_scope()
+    }
+
+    /// `toolCallDescriptionMaxChars` setter; `None` removes the limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the limit is zero or the global settings
+    /// scope cannot be saved.
+    pub fn set_tool_call_description_max_chars(&mut self, max_chars: Option<u64>) -> Result<()> {
+        if max_chars == Some(0) {
+            return Err(anyhow!("The description character limit must be positive"));
+        }
+        self.global_mut().tool_call_description_max_chars = max_chars;
+        self.save_global_scope()
+    }
+
+    /// Toggle one agents-view pin and return its new state. The pin list
+    /// lives in the global scope and is removed once empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session id is blank or the global
+    /// settings scope cannot be saved.
+    pub fn toggle_session_pinned(&mut self, session_id: &str) -> Result<bool> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Err(anyhow!("Session ID must be non-empty"));
+        }
+        let mut pinned = self.get_pinned_session_ids();
+        let was_pinned = pinned.iter().any(|existing| existing == session_id);
+        if was_pinned {
+            pinned.retain(|existing| existing != session_id);
+        } else {
+            pinned.push(session_id.to_string());
+        }
+        self.global_mut().pinned_session_ids = (!pinned.is_empty()).then_some(pinned);
+        self.save_global_scope()?;
+        Ok(!was_pinned)
     }
 }

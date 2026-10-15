@@ -53,7 +53,7 @@ impl AgentsViewMode {
         // The empty-catalog filter preserves the anchor and the scope root
         // (TS `preservedSessionIds`); the search filter keeps ancestors so
         // a match never orphans its parent row.
-        let mut preserved = Vec::new();
+        let mut preserved: Vec<&str> = self.pinned_session_ids.iter().map(String::as_str).collect();
         if let Some(anchor) = self.options.anchor_session_id.as_deref() {
             preserved.push(anchor);
         }
@@ -80,6 +80,7 @@ impl AgentsViewMode {
             &self.program_shown_parents,
             &rollups,
             self.options.anchor_session_id.as_deref(),
+            &self.pinned_session_ids,
         );
         // The entry anchor's row may be nested: arm the same ancestor
         // expansion below so this pass reveals it (a top-level anchor has
@@ -130,6 +131,7 @@ impl AgentsViewMode {
                         &self.program_shown_parents,
                         &rollups,
                         self.options.anchor_session_id.as_deref(),
+                        &self.pinned_session_ids,
                     );
                 }
             }
@@ -500,6 +502,12 @@ impl AgentsViewMode {
         // before the delete arm — TS :1153): enter the rename composer.
         if !has_query && self.keybindings.matches(key, "app.agents.rename") {
             self.enter_rename_mode();
+            return;
+        }
+        // TS `app.agents.pin` (default alt+p, empty editor only): pin or
+        // unpin the selected agent.
+        if !has_query && self.keybindings.matches(key, "app.agents.pin") {
+            self.toggle_pin_for_selected();
             return;
         }
         // TS `app.agents.delete` (default ctrl+x, empty editor only — TS

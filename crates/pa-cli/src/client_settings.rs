@@ -189,6 +189,67 @@ impl ClientSettings for CliClientSettings {
         bool
     );
 
+    fn title_model(&self) -> Option<String> {
+        let model = self.manager().get_title_model()?;
+        Some(format!("{}/{}", model.provider, model.id))
+    }
+
+    fn set_title_model(&self, model: Option<&str>) -> Result<()> {
+        let model = model
+            .map(|reference| {
+                reference
+                    .split_once('/')
+                    .map(|(provider, id)| pa_core::settings::TitleModelSetting {
+                        provider: provider.to_string(),
+                        id: id.to_string(),
+                    })
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Title model \"{reference}\" must be provider/id")
+                    })
+            })
+            .transpose()?;
+        self.manager().set_title_model(model)
+    }
+
+    fn tool_call_preview(&self) -> String {
+        self.manager().get_tool_call_preview().to_string()
+    }
+
+    fn set_tool_call_preview(&self, mode: &str) -> Result<()> {
+        self.manager().set_tool_call_preview(mode)
+    }
+
+    fn tool_call_description_max_chars(&self) -> Option<u64> {
+        self.manager().get_tool_call_description_max_chars()
+    }
+
+    fn set_tool_call_description_max_chars(&self, max_chars: Option<u64>) -> Result<()> {
+        self.manager()
+            .set_tool_call_description_max_chars(max_chars)
+    }
+
+    fn pinned_session_ids(&self) -> Vec<String> {
+        self.manager().get_pinned_session_ids()
+    }
+
+    fn toggle_session_pinned(&self, session_id: &str) -> Result<bool> {
+        self.manager().toggle_session_pinned(session_id)
+    }
+
+    fn ensure_global_settings_file(&self) -> Result<PathBuf> {
+        let path = self.agent_dir.join("settings.json");
+        if !path.exists() {
+            std::fs::create_dir_all(&self.agent_dir)?;
+            std::fs::write(&path, "{}\n")?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+            }
+        }
+        Ok(path)
+    }
+
     /// `updateChannel`: the settings enum's wire value; unset reads as
     /// `None` (TS's global-only `getUpdateChannel`).
     fn update_channel(&self) -> Option<String> {
@@ -282,5 +343,67 @@ mod tests {
         // ...and the /nightly on path's.
         settings.set_update_channel("nightly").expect("channel");
         assert_eq!(settings.update_channel().as_deref(), Some("nightly"));
+    }
+
+    /// The conversation-title, tool-call-preview, and pin rows persist
+    /// through the same store, and the settings file is created on demand.
+    #[test]
+    fn seam_persists_titles_tool_previews_pins_and_the_settings_file() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let agent_dir = dir.path().join("agent");
+        let settings = CliClientSettings::new(dir.path().to_path_buf(), agent_dir.clone());
+
+        assert_eq!(settings.title_model(), None);
+        assert_eq!(settings.tool_call_preview(), "code");
+        assert_eq!(settings.tool_call_description_max_chars(), None);
+        assert_eq!(settings.pinned_session_ids(), Vec::<String>::new());
+
+        // A model id may itself contain slashes: the provider is the part
+        // before the first one.
+        settings
+            .set_title_model(Some("openrouter/z-ai/glm-5.3"))
+            .expect("title model");
+        settings
+            .set_tool_call_preview("description")
+            .expect("preview");
+        settings
+            .set_tool_call_description_max_chars(Some(80))
+            .expect("limit");
+        assert!(settings.toggle_session_pinned("s1").expect("pin"));
+        assert!(settings.toggle_session_pinned("s2").expect("pin"));
+        assert!(!settings.toggle_session_pinned("s1").expect("unpin"));
+
+        assert_eq!(
+            settings.title_model().as_deref(),
+            Some("openrouter/z-ai/glm-5.3")
+        );
+        assert_eq!(settings.tool_call_preview(), "description");
+        assert_eq!(settings.tool_call_description_max_chars(), Some(80));
+        assert_eq!(settings.pinned_session_ids(), vec!["s2".to_string()]);
+        let written: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(agent_dir.join("settings.json")).expect("settings file"),
+        )
+        .expect("settings json");
+        assert_eq!(
+            written["titleModel"],
+            serde_json::json!({ "provider": "openrouter", "id": "z-ai/glm-5.3" })
+        );
+
+        settings.set_title_model(None).expect("clear");
+        assert_eq!(settings.title_model(), None);
+        assert!(settings.set_title_model(Some("no-slash")).is_err());
+
+        // An existing file is left alone; a missing one is created empty.
+        let existing = settings.ensure_global_settings_file().expect("existing");
+        assert!(std::fs::read_to_string(&existing)
+            .expect("read")
+            .contains("tool"));
+        let fresh_dir = tempfile::TempDir::new().expect("temp dir");
+        let fresh = CliClientSettings::new(
+            fresh_dir.path().to_path_buf(),
+            fresh_dir.path().join("agent"),
+        );
+        let created = fresh.ensure_global_settings_file().expect("created");
+        assert_eq!(std::fs::read_to_string(created).expect("read"), "{}\n");
     }
 }

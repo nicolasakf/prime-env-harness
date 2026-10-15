@@ -46,8 +46,9 @@ fn the_summary_line_renders_the_aggregate_in_the_cost_column() {
         .iter()
         .find(|line| line.contains("p name"))
         .expect("parent row renders");
-    let cost_at = summary.find("$4.75").expect("the aggregate prints");
-    let parent_cost_at = parent_line.find("$5.00").expect("the parent total prints");
+    let cost_at = str_width(&summary[..summary.find("$4.75").expect("the aggregate prints")]);
+    let parent_cost_at =
+        str_width(&parent_line[..parent_line.find("$5.00").expect("the parent total prints")]);
     assert_eq!(
         cost_at, parent_cost_at,
         "the aggregate shares the agent rows' Cost column"
@@ -163,8 +164,9 @@ fn the_summary_line_renders_the_aggregate_in_the_all_done_state() {
         .iter()
         .find(|line| line.contains("p name"))
         .expect("parent row renders");
-    let cost_at = summary.find("$2.00").expect("the aggregate prints");
-    let parent_cost_at = parent_line.find("$2.25").expect("the parent total prints");
+    let cost_at = str_width(&summary[..summary.find("$2.00").expect("the aggregate prints")]);
+    let parent_cost_at =
+        str_width(&parent_line[..parent_line.find("$2.25").expect("the parent total prints")]);
     assert_eq!(
         cost_at, parent_cost_at,
         "the summary line shares the agent rows' Cost column"

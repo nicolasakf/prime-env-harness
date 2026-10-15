@@ -51,6 +51,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         follow_up_mode: "one-at-a-time".to_string(),
         forced_all_steering: false,
         scoped_models: Vec::new(),
+        scope_origin: super::ScopeOrigin::Session,
         retry_abort_requested: false,
         queued_input_suspended: false,
         pending_next_turn: Vec::new(),
@@ -70,6 +71,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         active_session_id: "burst-session".to_string(),
         roster_pushes: crate::roster_activity::RosterPushQueue::disabled(),
         user_bash: std::sync::Arc::new(crate::user_bash::UserBash::new()),
+        titles: std::sync::Arc::new(crate::worker::ConversationTitles::default()),
         passivation: crate::worker::turn::PassivationContext {
             agent_dir: std::path::PathBuf::from("/tmp"),
             link: std::sync::Arc::new(crate::supervisor_link::SupervisorLink::new(

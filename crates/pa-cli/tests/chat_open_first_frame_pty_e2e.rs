@@ -119,7 +119,7 @@ fn chat_open_first_frame_pins_the_first_paint() {
     // The brand splash never paints: no splash-first startup frame (the
     // flash), so the butterfly never shifts a row under the title bar.
     assert!(
-        find_subsequence(stream, b"prime agent").is_none(),
+        find_subsequence(stream, b"prime env").is_none(),
         "the brand splash never paints for a direct open into content — \
          the whole stream carries the splash bytes"
     );

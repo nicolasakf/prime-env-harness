@@ -22,6 +22,7 @@ fn mode_with_notice(notice: &str) -> AgentsViewMode {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     });
     mode.rebuild_rows();
     mode

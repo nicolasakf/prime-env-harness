@@ -14,10 +14,12 @@ mod delete_stop;
 mod drill_down;
 mod edge_jumps;
 mod entry_anchor;
+mod environment_runs;
 mod hints_render;
 mod hover_band;
 mod key_bindings;
 mod notices;
+mod pins;
 mod render_pulse;
 mod reply;
 mod running_lines;
@@ -45,9 +47,11 @@ fn mode_with_row(title: &str, model: &str) -> (AgentsViewMode, usize) {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     });
     let row = |title: &str| AgentsViewRow {
         section: Section::Idle,
+        pinned: false,
         identity: title.to_string(),
         summary: serde_json::json!({ "sessionName": title }),
         title: title.to_string(),
@@ -154,6 +158,7 @@ fn mode_with_parent_and_child() -> AgentsViewMode {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     });
     mode.roster = vec![
         roster_entry("p", "idle", &parent_summary("p")),
@@ -183,6 +188,7 @@ fn mode_with_anchor(anchor: Option<&str>, roster: Vec<serde_json::Value>) -> Age
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     });
     mode.roster = roster;
     mode.rebuild_rows();
@@ -214,6 +220,7 @@ fn mode_with_user_bindings(bindings: &[(&str, &str)]) -> AgentsViewMode {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     });
     mode.roster = vec![
         roster_entry("p", "idle", &parent_summary("p")),
@@ -241,6 +248,7 @@ fn fresh_mode(roster: Vec<serde_json::Value>) -> AgentsViewMode {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     });
     mode.roster = roster;
     mode.rebuild_rows();

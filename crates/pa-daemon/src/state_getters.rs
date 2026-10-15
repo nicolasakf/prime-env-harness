@@ -23,6 +23,7 @@ impl Worker {
         if let Err(response) = self.require_created("get_connection_state") {
             return response;
         }
+        self.refresh_settings_scope();
         let core = self.core.lock().unwrap();
         let state = self.connection_state_locked(&core);
         drop(core);

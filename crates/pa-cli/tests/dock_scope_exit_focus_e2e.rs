@@ -323,6 +323,7 @@ async fn scope_exit_keeps_the_subagents_item(exit_key: &'static str) {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     };
     let view_plan = AgentsHeadlessPlan {
         steps: vec![

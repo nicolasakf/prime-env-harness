@@ -336,6 +336,7 @@ fn carried_selection_wins_over_the_entry_anchor() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        client_settings: None,
     });
     mode.roster = vec![
         roster_entry("s1", "idle", &parent_summary("s1")),

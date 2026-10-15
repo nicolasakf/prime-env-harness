@@ -1062,6 +1062,16 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// Capability-gated (`generate_session_title`): name the session with
+    /// the configured title model and persist the result as the session
+    /// name. The response carries the generated `name`.
+    GenerateSessionTitle {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     GetRlmMaxDepthStatus {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

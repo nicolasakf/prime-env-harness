@@ -672,6 +672,8 @@ impl Supervisor {
                 | DaemonCommand::Compact { .. }
                 // A tree navigation may run a branch-summary model call.
                 | DaemonCommand::NavigateTree { .. }
+                // Title generation is one model call.
+                | DaemonCommand::GenerateSessionTitle { .. }
         ) {
             LONG_ROUTE_TIMEOUT_MS
         } else {

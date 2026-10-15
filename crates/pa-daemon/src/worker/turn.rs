@@ -32,6 +32,8 @@ pub(super) struct TurnRunner {
     pub(super) roster_pushes: crate::roster_activity::RosterPushQueue,
     /// The user-bash handle: the idle passivation's live-bash gate.
     pub(super) user_bash: std::sync::Arc<crate::user_bash::UserBash>,
+    /// The conversation-title state shared with the command arms.
+    pub(super) titles: Arc<super::ConversationTitles>,
     /// The worker config slice the idle passivation needs (agent dir,
     /// supervisor link coordinates).
     pub(super) passivation: PassivationContext,
@@ -1324,6 +1326,23 @@ impl TurnRunner {
         }
         let _ = self.emit_action_update(&snapshot);
         self.idle_notify.notify_waiters();
+        if matches!(*turn_outcome.lock().unwrap(), Some(TurnSettle::Completed)) {
+            super::conversation_title::schedule_after_turn(
+                &self.titles,
+                super::conversation_title::AutoTitleContext {
+                    core: Arc::clone(&self.core),
+                    events: Arc::clone(&self.events),
+                    engine: Arc::clone(&self.engine),
+                    user_bash: Arc::clone(&self.user_bash),
+                    agent_dir: self.passivation.agent_dir.clone(),
+                    participant: self.agent_engine.as_ref().is_some_and(|engine| {
+                        engine
+                            .participant_binding()
+                            .map_or(true, |binding| binding.is_some())
+                    }),
+                },
+            );
+        }
         // The settled prompts' admissions clear (TS `clearAdmission` in
         // the prompt arm's finally).
         for admission_id in settled_admissions {

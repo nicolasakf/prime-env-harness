@@ -11,6 +11,17 @@ use serde_json::Value;
 use crate::session_store::SessionFile;
 use crate::types::SessionActionSnapshot;
 
+/// Where a session's scoped model list came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ScopeOrigin {
+    /// Resolved from the settings `enabledModels` patterns held here; the
+    /// worker re-resolves it when the saved patterns differ from these.
+    Settings { patterns: Vec<String> },
+    /// Chosen for this session alone (the create's `models`, or a scope change
+    /// that was not saved); a settings change never replaces it.
+    Session,
+}
+
 /// The live session: store, queue, sequencing. Shared by the connection tasks,
 /// the turn runner, and the compaction manager; every access is through the
 /// core mutex.
@@ -96,6 +107,9 @@ pub(crate) struct SessionCore {
     /// The scoped model list (TS `_scopedModels`): wire entries
     /// `{ model, thinkingLevel? }` the model cycler cycles within.
     pub(crate) scoped_models: Vec<Value>,
+    /// Where [`Self::scoped_models`] came from, which decides whether a later
+    /// `enabledModels` change may replace it.
+    pub(crate) scope_origin: ScopeOrigin,
     /// A retry in flight was aborted (`abort_retry`); the turn's abort
     /// probe reads it and the next turn start clears it.
     pub(crate) retry_abort_requested: bool,
@@ -173,6 +187,7 @@ impl SessionCore {
             follow_up_mode: "one-at-a-time".to_string(),
             forced_all_steering: false,
             scoped_models: Vec::new(),
+            scope_origin: ScopeOrigin::Session,
             retry_abort_requested: false,
             queued_input_suspended: false,
             pending_next_turn: Vec::new(),

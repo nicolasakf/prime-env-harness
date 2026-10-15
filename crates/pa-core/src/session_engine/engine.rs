@@ -543,7 +543,12 @@ async fn create_session_inner(
     if !participant && !tools.iter().any(|tool| tool.name() == "ipython") {
         let definition = crate::tools::ipython::create_ipython_tool_definition(
             &cwd.to_string_lossy(),
-            super::runtime_wiring::ipython_tool_options(provisioner.clone()),
+            super::runtime_wiring::ipython_tool_options(
+                provisioner.clone(),
+                crate::tools::ipython::IpythonPreview::from_settings(
+                    &crate::settings::SettingsManager::create(&cwd, &config.agent_dir),
+                ),
+            ),
         );
         tools.push(Arc::new(
             crate::session_engine::tool_bridge::ToolDefinitionBridge::new(definition),

@@ -181,6 +181,53 @@ pub trait ClientSettings: Send + Sync {
     /// Returns `Err` when opening or persisting the settings
     /// store fails.
     fn set_warnings_anthropic_extra_usage(&self, enabled: bool) -> Result<()>;
+    /// `titleModel` as a `provider/id` reference; `None` when unset.
+    fn title_model(&self) -> Option<String>;
+    /// Persists `titleModel` (`provider/id`, split at the first `/`) to the
+    /// global scope; `None` clears it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the reference has no provider or id, or opening
+    /// or persisting the settings store fails.
+    fn set_title_model(&self, model: Option<&str>) -> Result<()>;
+    /// `toolCallPreview` (`code` or `description`).
+    fn tool_call_preview(&self) -> String;
+    /// Persists `toolCallPreview` to the global scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the mode is unknown or opening or persisting
+    /// the settings store fails.
+    fn set_tool_call_preview(&self, mode: &str) -> Result<()>;
+    /// `toolCallDescriptionMaxChars`; `None` is no limit.
+    fn tool_call_description_max_chars(&self) -> Option<u64>;
+    /// Persists `toolCallDescriptionMaxChars` to the global scope; `None`
+    /// removes the limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the limit is zero or opening or persisting the
+    /// settings store fails.
+    fn set_tool_call_description_max_chars(&self, max_chars: Option<u64>) -> Result<()>;
+    /// The agents-view pins (`pinnedSessionIds`, global scope), ordered by
+    /// when they were pinned.
+    fn pinned_session_ids(&self) -> Vec<String>;
+    /// Toggles one agents-view pin in the global scope and returns whether
+    /// the session is pinned afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the id is blank or opening or persisting the
+    /// settings store fails.
+    fn toggle_session_pinned(&self, session_id: &str) -> Result<bool>;
+    /// The global `settings.json` path, created as an empty document when
+    /// it does not exist yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the file or its directory cannot be created.
+    fn ensure_global_settings_file(&self) -> Result<std::path::PathBuf>;
     /// `updateChannel` (`stable`/`nightly`; unset infers the channel from
     /// the running version).
     fn update_channel(&self) -> Option<String>;
