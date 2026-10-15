@@ -241,7 +241,8 @@ pub(crate) fn is_always_on_adaptive_thinking_model(model_id: &str) -> bool {
         || model_id.contains("opus-5.5")
 }
 
-/// Check if a model supports adaptive thinking (Opus 4.6+, Sonnet 4.6+).
+/// Check if a model supports adaptive thinking (Opus 4.6+, Sonnet 4.6+,
+/// Haiku 5.5+).
 pub(crate) fn supports_adaptive_thinking(model_id: &str) -> bool {
     model_id.contains("opus-4-6")
         || model_id.contains("opus-4.6")
@@ -253,6 +254,8 @@ pub(crate) fn supports_adaptive_thinking(model_id: &str) -> bool {
         || model_id.contains("sonnet-4-6")
         || model_id.contains("sonnet-4.6")
         || model_id.contains("sonnet-5")
+        || model_id.contains("haiku-5-5")
+        || model_id.contains("haiku-5.5")
         || model_id.contains("fable-5")
         || model_id.contains("mythos-5")
         || model_id.contains("mythos-preview")
@@ -677,6 +680,56 @@ mod compat_tests {
                 supports_eager_tool_input_streaming: true,
                 supports_long_cache_retention: false,
             }
+        );
+    }
+}
+
+#[cfg(test)]
+mod adaptive_thinking_request_tests {
+    use super::params::build_params;
+    use super::{AnthropicEffort, AnthropicOptions};
+    use crate::types::{Context, Model, StreamOptions};
+    use serde_json::{json, Value};
+
+    fn thinking_params(model_id: &str) -> (Value, Value) {
+        let model: Model = serde_json::from_value(json!({
+            "id": model_id, "name": model_id, "api": "anthropic-messages",
+            "provider": "anthropic", "baseUrl": "https://api.anthropic.com",
+            "reasoning": true, "input": ["text"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 200_000, "maxTokens": 64_000,
+        }))
+        .expect("test model");
+        let mut options = AnthropicOptions::from_base(StreamOptions::default());
+        options.thinking_enabled = Some(true);
+        options.thinking_budget_tokens = Some(16_384);
+        options.effort = Some(AnthropicEffort::High);
+        let params = build_params(&model, &Context::default(), false, Some(&options), None);
+        (params["thinking"].clone(), params["output_config"].clone())
+    }
+
+    #[test]
+    fn haiku_5_5_sends_adaptive_thinking_with_effort() {
+        for id in ["claude-haiku-5-5", "anthropic/claude-haiku-5.5"] {
+            assert_eq!(
+                thinking_params(id),
+                (
+                    json!({ "type": "adaptive", "display": "summarized" }),
+                    json!({ "effort": "high" })
+                ),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn haiku_4_5_keeps_budget_thinking() {
+        assert_eq!(
+            thinking_params("claude-haiku-4-5-20251001"),
+            (
+                json!({ "type": "enabled", "budget_tokens": 16_384, "display": "summarized" }),
+                Value::Null
+            )
         );
     }
 }
