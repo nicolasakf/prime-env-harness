@@ -1,19 +1,17 @@
-# Prime Environment Harness
+# Prime Env reference
 
-Fork: https://github.com/nicolasakf/prime-env-harness
-Upstream: https://github.com/PrimeIntellect-ai/prime-agent
-Starting revision: `3358e0016bce7cf34a195af58bbd91a26e17d694`
-
-The [current harness guide](docs/harness.md) documents the implemented workflow,
-session roles, participant combinations, attention, forms, policy, persistence,
-and diagnostics. Authoring references and a complete relay example ship inside
-the environment skills, independently of the launch directory.
+Prime Env is built on [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent).
+The [harness guide](harness.md) documents the implemented workflow, session roles,
+participant combinations, attention, forms, policy, persistence, and diagnostics.
+Authoring references and a complete relay example ship inside the environment
+skills, independently of the launch directory. Ready-made environments are in
+[examples/](../examples/README.md).
 
 Run `cargo run -p pa-cli --bin prime-env-harness -- --data-dir <directory>`.
 The default directory is `~/.prime-env-harness`. Its daemon, worker descriptors,
 locks, credentials, settings, sessions, definitions, and instances are independent
-of ordinary Prime Agent. Existing checkouts remain unchanged.
-The retained `prime-agent` binary is the upstream reference surface.
+of any Prime Agent installation. The `prime-agent` binary still builds from this
+workspace as the inherited reference surface.
 
 ## Local development
 
@@ -34,9 +32,9 @@ Avoid repeating its individual gates separately. Use
 require `make deny`; environment and parity verification requirements remain in
 [AGENTS.md](AGENTS.md). Documentation-only edits need diff and whitespace review.
 
-Fork update configuration: source repository `nicolasakf/prime-env-harness`,
-manual Cargo builds. CLI and TUI upstream installers are disabled in the fork
-application until a fork release channel is provisioned.
+Updates: source repository `nicolasakf/prime-env-harness`, manual Cargo builds.
+The inherited Prime Agent installers are disabled in this application until a
+release channel is provisioned.
 
 Local workers require Node 22.20 or newer for TypeScript and Python 3.10 or newer
 with venv support. Docker requires a running daemon and permission to pull/build
@@ -170,7 +168,7 @@ completed CI run. Recorded results and platform blockers are in
 [VERIFICATION.md](VERIFICATION.md).
 
 Hosted execution, generated custom TUIs, branching/rewind and automatic state
-migration remain outside this fork's scope. Saved v1 definitions retain their
+migration are outside the current scope. Saved v1 definitions retain their
 one-human/one-agent contract; v2 enables multiple model seats and agents-only runs.
 
 ## Environment seats and attention
@@ -215,5 +213,5 @@ pa-types among workspace crates. pa-core's exported SeatPort uses shared wire
 types and no pa-environments dependency; pa-daemon owns supervision, wake
 admission and provisioning. pa-tui renders public wire events only. The new
 public SeatPort, roster and table APIs are architectural surfaces. Environment
-surfaces are exempt from upstream TypeScript parity; upstream builder tools and
+surfaces are exempt from Prime Agent TypeScript parity; the inherited builder tools and
 protocol identifiers remain unchanged.
