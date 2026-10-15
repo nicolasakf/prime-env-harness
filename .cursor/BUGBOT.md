@@ -73,18 +73,18 @@ either changes.
 
 - The model catalog is hand-maintained data: `crates/pa-ai/src/models_generated.rs` mirrors the TS `packages/ai/src/models.generated.ts` object literal (no generator, no generated JSON — edit it by hand exactly like its TS source), and the parity fixture `crates/pa-models/tests/fixtures/catalog.v1.json` refreshes with `scripts/generate-catalog-fixture.py` from the real `PrimeIntellect-ai/prime-agent-catalog` snapshot. Flag edits that would reintroduce a generator or hand-tweak the fixture rows.
 - Bulk data files are exempt from the size guidance; the exemption's reason is that the file mirrors an upstream data source.
-# Fork scope
+# Project scope
 
-This is the Prime Environment Harness fork. Environment definitions, execution,
+This is Prime Env, built on Prime Agent. Environment definitions, execution,
 participant tools/policy, the `environments_v1` daemon extension, and `/env` UI
-are deliberate additions exempt from upstream TypeScript parity and builder
+are deliberate additions exempt from Prime Agent TypeScript parity and builder
 surface restrictions. Preserve ordinary builder behavior and cycle-free crate
 dependencies. `pa-environments` depends on `pa-types`; core and daemon may use
 it; TUI only uses shared wire types. Docker remains optional for all capabilities.
-Keep fork state and updates independent of ordinary Prime and sibling checkouts.
+Keep Prime Env state and updates independent of any Prime Agent installation.
 Environment vs harness: a change to one environment (definition, rules, actions,
 views, prompts, policy, data, tests) belongs only in that environment's files
-(`crates/pa-environments/fixtures/<env>/`, its dedicated test file, or its definition in
+(`crates/pa-environments/fixtures/<env>/`, `examples/<env>/`, its dedicated test file, or its definition in
 the data dir). Flag any harness change (`pa-environments` runtime/broker/runner/SDKs,
 `pa-core`, `pa-daemon`, `pa-tui`, `pa-cli`, prompt layers, `skills/`, `docs/`) that fixes
 or special-cases one environment, names a specific environment or its vocabulary, or

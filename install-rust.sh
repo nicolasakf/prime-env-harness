@@ -767,7 +767,7 @@ for flag in sys.argv[1:-1]:
 # shapes is the TypeScript daemon of ANY version; anything else is
 # unrecognized (the loud warning).
 TS_SCHEMA_FAMILY = "protocol-7-schema-"
-RUST_SCHEMA_ID = "protocol-7-schema-30-8e4b17c2a9f5"
+RUST_SCHEMA_ID = "protocol-7-schema-31-generate-session-title"
 RUST_BUILD_ID_PREFIX = "pa-daemon-rs-"
 HELLO_TIMEOUT_S = 1.5
 PROBE_TIMEOUT_S = 5.0

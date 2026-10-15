@@ -10,3 +10,4 @@ fmt-*.log
 tests-*.log
 test-compile-*.log
 
+.DS_Store

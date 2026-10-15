@@ -1,30 +1,40 @@
 ---
 name: websearch
-description: Search Google via the Serper API. Configure access via /mcp, then Serper (web search). Takes one query and returns titles, URLs, snippets, and knowledge-graph data.
+description: Optional Serper search tool, only for explicit user requests to use Serper. For ordinary web research, use public Exa MCP instead; read ../mcp/SKILL.md and ../mcp/references/public-http.md. Do not request Serper or Google API setup for ordinary web research.
 ---
 
-# Web Search
+# Web Research
 
-Search the web via the Serper Google Search API.
+## Default: public Exa MCP
 
-## Setup
+For ordinary web research, use Exa's public MCP endpoint, not the `websearch`
+Python callable. Read [the MCP skill](../mcp/SKILL.md) and follow its
+[public HTTP recipe](../mcp/references/public-http.md). Discover the live tool
+schemas before calling. Anonymous access needs no API key or configured MCP
+connection; follow the anonymous rate-limit guidance.
 
-Get a free API key at https://serper.dev, then run `/mcp` in Prime Agent and
-choose **Serper (web search)** to paste it.
-The key is stored in Prime Agent and made available to this skill automatically.
+Do not call Serper or a Google search API unless the user explicitly requests
+that provider. Do not ask for a Serper key, Google API key, or Exa connection as
+setup for ordinary web research. If an accidental `websearch` call reports a
+missing Serper key, switch to public Exa rather than following its setup message.
+If Exa is unavailable or rate-limited, report that limitation; do not silently
+switch providers or begin credential setup.
 
-If web search reports a missing key, walk the user through those two steps;
-don't ask them to set environment variables.
+## Optional: explicitly requested Serper
 
-Optional overrides (environment variables):
+The existing `websearch` callable searches Google through Serper. Use it only
+when the user explicitly requests Serper. It uses `SERPER_API_KEY` if set;
+otherwise it reads the stored `serper` credential from `auth.json`. If the user requests Serper and has
+no key configured, explain that this optional provider requires a key from
+https://serper.dev, stored through `/mcp` → **Serper (web search)** in Prime Env.
 
-- `PRIME_AGENT_WEBSEARCH_TIMEOUT` - HTTP timeout in seconds (default 45).
-- `PRIME_AGENT_WEBSEARCH_NUM_RESULTS` - number of organic results to return (default 5).
+Optional environment overrides for this provider:
 
-## Usage
+- `PRIME_AGENT_WEBSEARCH_TIMEOUT` — HTTP timeout in seconds (default 45).
+- `PRIME_AGENT_WEBSEARCH_NUM_RESULTS` — results to return (default 5).
 
-Call the prepared `websearch` import directly in the Python kernel:
+Only for an explicit Serper request:
 
 ```python
-print(await websearch("latest Prime Agent release"))
+print(await websearch("search query"))
 ```

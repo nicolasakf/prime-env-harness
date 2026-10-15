@@ -1,10 +1,7 @@
-# Prime Environment Harness: current behavior
+# Prime Env: current behavior
 
-This guide describes the implementation in this checkout on 2026-10-04,
-including environment-controlled attention and N-seat runs from
-[Review environment wake plan](codex://threads/01a102d7-b0c1-7e11-a166-451b1bfc9339)
-and terminal forms from
-[Design lightweight environment UI](codex://threads/01a102da-38e9-7210-a300-87c05aad0bcc).
+This guide describes the implementation in this repository as of 2026-10-10,
+including environment-controlled attention, N-seat runs, and terminal forms.
 The [verification record](../VERIFICATION.md) separately records checks run and
 outstanding merge-gate blockers.
 
@@ -28,12 +25,13 @@ outstanding merge-gate blockers.
 
 ## Launch and builder skill availability
 
-Prime Environment Harness is the `prime-env-harness` application in this Rust
-fork of Prime Agent. The retained `prime-agent` binary represents the upstream
-surface. The environment app has its own daemon, settings, credentials, history,
+Prime Env is the `prime-env-harness` application, built on
+[Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent). The inherited
+`prime-agent` binary still builds from this workspace as the reference surface.
+The environment app has its own daemon, settings, credentials, history,
 environment store, and worker descriptors under `~/.prime-env-harness` by default.
 
-From the source checkout:
+From the repository root:
 
 ```sh
 cargo run -p pa-cli --bin prime-env-harness
@@ -68,8 +66,8 @@ executable; otherwise the runner probes supported Python commands. The builder
 REPL has its own Prime Agent runtime and skill
 bootstrap, independently of participant Python capability.
 
-The fork disables upstream installers in CLI/TUI update flows. Its current
-update path is rebuilding the checkout; no fork release channel is provisioned.
+The inherited Prime Agent installers are disabled in CLI/TUI update flows. The
+current update path is rebuilding from source; no release channel is provisioned.
 
 ### Instructions outside the checkout
 
@@ -969,8 +967,8 @@ Run heavy Cargo commands sequentially. Code iteration uses focused checks;
 final code validation runs `CARGO_BUILD_JOBS=2 make check` once, plus `make deny`
 for dependency changes. Documentation-only edits need diff/whitespace review.
 See [VERIFICATION.md](../VERIFICATION.md) for actual results; configured CI is
-not a completed run. Fork environment surfaces are exempt from upstream TS
-parity; ordinary builder behavior retains its upstream contract.
+not a completed run. Environment surfaces are exempt from Prime Agent TS
+parity; ordinary builder behavior retains its inherited contract.
 
 ## Current boundaries and troubleshooting
 
@@ -1004,4 +1002,4 @@ deferred. Environments use explicit actions/text/messages/attention and bounded 
 | Secret appears publicly | Public notices/finish, schemas, human view, filtering |
 | Local code reads other files | Host-user permissions; Docker/narrow mounts provide isolation |
 
-See [FORK.md](../FORK.md) for fork identity and development commands.
+See [reference.md](reference.md) for running, policies and ownership.

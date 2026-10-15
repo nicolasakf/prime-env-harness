@@ -1,18 +1,20 @@
 # AGENTS.md
 
-Development rules for Prime Agent (Rust) on PrimeIntellect-ai/prime-agent, branch `main`.
+Development rules for Prime Env (Rust) on nicolasakf/prime-env-harness, branch `main`.
+Prime Env is built on Prime Agent (PrimeIntellect-ai/prime-agent); code inherited from it keeps its upstream contracts.
 Every contributor (human or agent) must read this before working on this repo.
 
 ## Environment vs harness (read before planning any change)
 
-This fork has two layers, and every change belongs to exactly one of them. Before you
+This project has two layers, and every change belongs to exactly one of them. Before you
 edit anything, decide which layer the change is for and say so in your plan.
 
 - **Environment**: one specific environment's content: its definition, rules, actions,
   views, prompts, policy, seat/role behavior, data, and its tests. It lives only in that
   environment's own files: the definition under `~/.prime-env-harness/environments/`
   (user data, never in this repo), and in-repo only its fixture directory
-  `crates/pa-environments/fixtures/<env>/` plus its dedicated test file in
+  `crates/pa-environments/fixtures/<env>/`, its shipped example under `examples/<env>/`,
+  plus its dedicated test file in
   `crates/pa-environments/tests/` (for example `fixtures/card_market/` and
   `tests/card_market.rs`).
 - **Harness**: everything that works for any environment: the `pa-environments` runtime,
@@ -42,12 +44,12 @@ Rules:
 
 ## Repository
 
-- The repo is PrimeIntellect-ai/prime-agent; the Rust implementation lives on the `main` branch.
-- PRs go to the org repo with base `main`:
-  `gh pr create --repo PrimeIntellect-ai/prime-agent --base main`.
-- CI runs on the org's billing: `.github/workflows/continuous.yml` on `main` pushes and
-  `release.yml` on version tags.
-- Parity ground truth is unchanged: the TS checkout at ~/prime-agent (read-only).
+- The repo is nicolasakf/prime-env-harness; development happens on the `main` branch.
+- PRs go to this repo with base `main`:
+  `gh pr create --repo nicolasakf/prime-env-harness --base main`.
+- CI: `.github/workflows/continuous.yml` on `main` pushes and `release.yml` on version tags.
+- Parity ground truth for inherited Prime Agent surfaces is unchanged: the TS checkout at
+  ~/prime-agent (read-only).
 
 ## Style and structure
 
@@ -166,11 +168,12 @@ seam emits it from day one. Telemetry properties never carry prompt, session, or
 
 ## Branding
 
-The product is Prime Agent - we are not a pi fork. Scrub "pi"/"pi-mono"/"pi-ai"/
+The product is Prime Env, built on Prime Agent. The README, license, and citation acknowledge
+Prime Agent and Prime Intellect on purpose; keep those. Elsewhere, scrub "pi"/"pi-mono"/"pi-ai"/
 "Prime Intellect"-style naming from all user-visible surfaces (docs, READMEs,
 CLI help text, error messages, splash/onboarding strings, keybinding hints, TUI
 labels, and code comments that quote user-facing strings); brand everything
-Prime Agent. Audit with a repo-wide grep and classify every hit (user-visible
+Prime Env. Audit with a repo-wide grep and classify every hit (user-visible
 vs wire-internal vs comment) before scrubbing, and list the preserved wire
 identifiers in the PR body so the reviewer can verify none were wrongly scrubbed.
 
@@ -219,10 +222,10 @@ Layering rules:
 ## References
 
 - Cursor Bugbot's PR review rules (`.cursor/BUGBOT.md`) mirror the standards in this file - update both whenever either changes.
-# Fork scope
+# Project scope
 
-This checkout is `nicolasakf/prime-env-harness`, based on Prime's Rust workspace
-at `3358e0016bce7cf34a195af58bbd91a26e17d694`. The environment application uses
+This repository is `nicolasakf/prime-env-harness`, built on Prime Agent's Rust workspace
+(starting revision `3358e0016bce7cf34a195af58bbd91a26e17d694`). The environment application uses
 `prime-env-harness` and `~/.prime-env-harness`; never edit sibling checkouts.
 The environment contract, participant profile, daemon extension, and `/env`
 UI are intentionally new surfaces and are exempt from upstream TypeScript
@@ -230,5 +233,5 @@ parity and the immutable builder-tool contract below. Preserve upstream builder
 behavior. Docker is optional, including for participant Python.
 `pa-environments` owns execution and persistence and depends only on `pa-types`.
 `pa-core` and `pa-daemon` may depend on it; `pa-tui` still depends only on shared
-wire types. Direct dependencies added by this fork use exact versions. Follow the Development workflow above: focused environment tests during iteration,
+wire types. Direct dependencies added by this project use exact versions. Follow the Development workflow above: focused environment tests during iteration,
 `make check` for final code validation, and `make deny` when dependencies change. Leave changes uncommitted unless asked.

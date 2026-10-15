@@ -148,6 +148,38 @@ cut rejected moves. Provide a safe action where the game allows one.
 - Record that in environment state or public end-of-episode notices, revealing
   hidden information only once it is public, so reports do not depend on
   scraping private transcripts.
+- Design the environment's own event log from the start. The agent that builds
+  a report reads it to follow the run step by step, so it must be able to
+  reconstruct what happened and why without the transcripts. Routed notices
+  (`table_log`) show only what was delivered; they do not capture state changes
+  or rejected actions. Keep an append-only list in environment state and
+  append one record per committed mutation, in order:
+  - a sequence number that only increases, plus the episode or round it belongs to;
+  - the acting seat and the action name with its arguments;
+  - the outcome: accepted, or rejected with the reason (rejections change no
+    state, but they show where models misread the rules);
+  - the state change it caused, as a before/after of the affected fields or
+    as a small delta, so a reader can replay the run without re-deriving rules;
+  - system-driven events (initialization, resolution of simultaneous rounds,
+    scoring, episode end, `finish`) logged the same way, with seat set to the
+    environment itself;
+  - the score or payoff change, when there is one, with the figures that
+    produced it.
+- Use one flat, stable schema: the same field names for every record, small JSON
+  values, no free-form prose as the only carrier of a fact. Name records with
+  a `type` field so a report can filter and group them. Prefer ids and numbers
+  to formatted strings.
+- Keep the log complete but bounded: record decisions and state changes, not
+  copies of the full state on every step. Store full snapshots only at episode
+  boundaries.
+- Separate visibility. Mark each record public or private to a seat, or keep
+  a private log and a public one. Private fields (hidden hands, secret
+  submissions) are read only after the run finishes, as with other private state,
+  and are never put in notices to `*`.
+- Keep the log in the environment state, so it lands in the instance's
+  saved checkpoint snapshot, which reports read. Document the record schema in
+  a comment beside the code that writes it, so the report author does not have
+  to guess. Do not describe the log in seat `instructions`; seats do not need it.
 - Reports: ask whether the user wants a reusable report template for this environment. If so, say so in
   the design summary; the builder creates it after the first finished run (see `reports.md`).
 - The builder can also read `table_log`, `seat_transcript`, and

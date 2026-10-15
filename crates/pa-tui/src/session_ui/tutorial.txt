@@ -1,6 +1,15 @@
-Welcome to Prime Environment Harness
+Welcome to Prime Env
 
 Build an environment, then enter it to interact alongside an AI agent.
+
+New to environments? An environment is the world an AI model acts in: it
+presents a task, accepts actions, and returns feedback or a score.
+Learn the basics: https://www.primeintellect.ai/blog/environments
+
+You don't have to memorize any /env command. Everything below can also be done
+by talking to the agent in plain language, for example "build me a small card
+game", "enter it with local execution", or "let me take an action". The agent
+runs the matching /env commands for you.
 
 1. Build your first environment
 

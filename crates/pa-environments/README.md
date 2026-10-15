@@ -66,7 +66,7 @@ lock. Intent records precede dispatch, and snapshots contain completion receipts
 Repeated operation IDs return recorded results. RecoveryRequest records an
 explicitly reconciled snapshot and receipts; it never triggers redispatch.
 
-See [../../FORK.md](../../FORK.md) for execution grants, local isolation limits,
+See [../../docs/reference.md](../../docs/reference.md) for execution grants, local isolation limits,
 the participant Python checkpoint limits, and user-facing commands.
 
 Attention metadata is committed with the snapshot and receipt: notify targets,
