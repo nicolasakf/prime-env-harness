@@ -1,0 +1,17 @@
+{
+  "id": "game-report",
+  "title": "Game report: P&L, EV vs realized, timing, cost",
+  "definition_id": "sequential-card-market-stateless",
+  "compatible_versions": [
+    "98884fcc9cfebcf06070ba126ddda2a0d1e89823c5bad9880a95b8c6561adf46",
+    "bcb75ae3bac1899e5572319b33020cf67d152b081bd1fb4e99025174c44efe01"
+  ],
+  "revision": "v1",
+  "requires": [
+    "ipykernel",
+    "nbclient",
+    "nbconvert"
+  ],
+  "saved_at": "2026-10-07T13:55:12+00:00",
+  "content_hash": "ffb390def676c1b1"
+}

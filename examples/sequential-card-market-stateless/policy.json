@@ -1,0 +1,12 @@
+{
+  "backend": "local",
+  "python_execution": false,
+  "networking": false,
+  "mounts": [],
+  "secrets": [],
+  "integrations": [],
+  "call_timeout_seconds": 120,
+  "preparation_timeout_seconds": 600,
+  "cpus": 2,
+  "memory_mib": 1024
+}

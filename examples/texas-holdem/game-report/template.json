@@ -1,0 +1,18 @@
+{
+  "id": "game-report",
+  "title": "Game report: results, playing style, equity vs price, showdowns, timing, cost",
+  "definition_id": "texas-holdem",
+  "compatible_versions": [
+    "b49d3ef92675e64b37ed5d3a8e95065c6b36e030b864c777f82e9a33a0045afe"
+  ],
+  "revision": "v3",
+  "content_hash": "b0224dfca599ff4a",
+  "requires": [
+    "ipykernel",
+    "matplotlib",
+    "nbclient",
+    "nbconvert",
+    "pandas"
+  ],
+  "saved_at": "2026-10-08T15:19:58+00:00"
+}
