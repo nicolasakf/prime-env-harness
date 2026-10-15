@@ -42,6 +42,8 @@ struct BindingState {
     wake: u64,
     /// Latest state a tool delivered, as (wake it followed, its version).
     published: Option<(u64, u64)>,
+    /// Model requests sent so far; tells apart the responses that reuse a call id.
+    requests: u64,
 }
 
 impl ViewBinding {
@@ -66,6 +68,7 @@ impl ViewBinding {
     /// context holds (`through_seq`, version) and what tools delivered since.
     fn freeze(&self, wake: Option<(u64, u64)>) {
         let mut state = self.state();
+        state.requests += 1;
         let published = state.published;
         match wake {
             Some((through_seq, version)) => {
@@ -132,7 +135,14 @@ pub(crate) fn participant_tools(
             prompt_snippet: String::new(), execution_mode: Some(ExecutionMode::Sequential), prepare_arguments: None,
             execute: Arc::new(move |id, params, signal, _on_update| {
                 let port = Arc::clone(&port); let tool = tool.clone(); let views = Arc::clone(&views);
-                let id = format!("tool-{:x}", Sha256::digest(id.as_bytes()));
+                // Providers number tool calls per response (`name:0`), so the model's id
+                // alone repeats across turns and would replay a cached receipt. The request
+                // that wrote the call makes it unique; a retry of the same call keeps it.
+                let id = {
+                    let state = views.state();
+                    let scope = format!("{}:{}:{}", state.wake, state.request, state.requests);
+                    format!("tool-{:x}", Sha256::digest(format!("{scope}\0{id}").as_bytes()))
+                };
                 Box::pin(async move {
                     let text = |key: &str| -> Result<String> { Ok(params.get(key).and_then(Value::as_str).with_context(|| format!("{key} is required"))?.to_owned()) };
                     let view_version = Some(views.request_version());
@@ -424,6 +434,39 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(views.request_version(), 12);
+    }
+
+    /// Providers number tool calls per response, so separate turns reuse the same call id.
+    /// Each must reach the host as its own operation instead of replaying an earlier receipt.
+    #[tokio::test]
+    async fn a_call_id_reused_by_a_later_request_is_a_new_operation() {
+        let port = Arc::new(RecordingPort {
+            calls: std::sync::Mutex::default(),
+            replies: std::sync::Mutex::new([reply(5, false), reply(5, false)].into()),
+        });
+        let dyn_port: Arc<dyn SeatPort> = Arc::clone(&port) as Arc<dyn SeatPort>;
+        let views = Arc::new(ViewBinding::default());
+        let tools = participant_tools(&market_binding(), &dyn_port, &views);
+        let buy = tools.iter().find(|tool| tool.name() == "env_buy").unwrap();
+        let transform = seat_context(true, Arc::new(AtomicU64::new(0)), Arc::clone(&views));
+        for _ in 0..2 {
+            transform(vec![versioned_wake(3, 5)], AbortSignal::default())
+                .await
+                .unwrap();
+            call_buy(buy, "env_buy:0").await;
+        }
+        let operation_ids: Vec<String> = port
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|call| match call {
+                SeatCall::Invoke { operation_id, .. } => operation_id.clone(),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(operation_ids.len(), 2);
+        assert_ne!(operation_ids[0], operation_ids[1]);
     }
 
     /// A refused call hands the model the current state, which governs its next request.
