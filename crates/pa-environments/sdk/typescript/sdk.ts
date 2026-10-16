@@ -19,6 +19,7 @@ export interface Action {
  * Agent observations and tool responses are also private. Publish public information
  * in the human observation; keep private state out of action schemas.
  */
+export interface MissedTurn { cause: "idle" | "deadline" | "suspended"; misses: number; limit: number }
 export interface InputResult { observation: Json; agent_message?: string | null }
 export interface Environment {
     initialize(params: Json): Json | Promise<Json>;
@@ -30,6 +31,17 @@ export interface Environment {
      * Defaults to `observe`. Keep it under 32 KiB.
      */
     agent_view?(participant: Participant): Json | Promise<Json>;
+    /** Optional. What a live viewer draws for `{kind: "public"}` or `{kind: "seat", seat}`, filtered like `observe`. Without it the run has no live view. */
+    frame?(perspective: { kind: "public" } | { kind: "seat"; seat: string }): Json | Promise<Json>;
+    /**
+     * Optional, with manifest `"missed_turns": true`. Called when an awaited agent seat's turn ends
+     * without an action. Warn the seat with `notify(..., { wake: true })`, act for it, or do nothing;
+     * without a wake from here the host re-prompts generically, and once `misses` exceeds `limit` it
+     * stops the run unless this call resolved the seat's turn. Cause `"suspended"` means the
+     * builder took the seat out of play: it is reported once per progress revision and never
+     * re-prompted, so act for the seat to keep the run moving.
+     */
+    missed_turn?(participant: Participant, report: MissedTurn): Json | Promise<Json>;
     handle_input(participant: Participant, text: string): InputResult | Promise<InputResult>;
     invoke(participant: Participant, action: string, args: Json): Json | Promise<Json>;
     snapshot(): Json | Promise<Json>;
@@ -78,8 +90,12 @@ export async function serve(environment: Environment): Promise<void> {
                 case "describe_actions": result = await environment.describe_actions(); break;
                 case "observe": result = await environment.observe(request.participant); break;
                 case "agent_view": result = await (environment.agent_view ?? environment.observe).call(environment, request.participant); break;
+                case "frame": result = environment.frame ? await environment.frame.call(environment, request.params.perspective as never) : null; break;
                 case "handle_input": result = await environment.handle_input(request.participant, String(request.params.text)); break;
                 case "invoke": result = await environment.invoke(request.participant, String(request.params.action), request.params.arguments); break;
+                case "missed_turn":
+                    if (!environment.missed_turn) throw new Error("unknown environment method");
+                    result = await environment.missed_turn(request.participant, request.params as unknown as MissedTurn); break;
                 case "snapshot": result = await environment.snapshot(); break;
                 case "restore": result = await environment.restore(request.params); break;
                 case "dispose": result = await environment.dispose(); break;
@@ -98,7 +114,7 @@ let finishBuffer: { summary: string } | undefined;
 let progressBuffer: { revision: number; waiting_for: string[] } | undefined;
 let requestMethod: string | undefined;
 function mutationMetadata(): void {
-    if (requestMethod !== undefined && !["initialize", "invoke", "handle_input"].includes(requestMethod)) throw new Error("notifications and completion require a committed operation");
+    if (requestMethod !== undefined && !["initialize", "invoke", "handle_input", "missed_turn"].includes(requestMethod)) throw new Error("notifications and completion require a committed operation");
 }
 /** `actionable` marks a wake as the task for the named seats to act on now: the host drops it from a wake that starts after the environment stopped awaiting the seat (`progress({waiting_for})`). Needs `wake` and named seats. */
 export function notify(to: "*" | string[], message?: string | null, options: { wake?: boolean; actionable?: boolean } = {}): void {

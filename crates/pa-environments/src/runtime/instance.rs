@@ -2,8 +2,8 @@
 use super::{
     assert_resolved, bail, component, intent_once, json, notices, read_json, receipt_value, value,
     write_json, ActiveInstance, Arc, BTreeMap, CancellationToken, Context, HostCallHandler,
-    HumanInputResult, InstanceRoster, OperationReceipt, Path, Result, SeatId, StaleView, Value,
-    ViewGuard, MAX_AGENT_VIEW_BYTES,
+    HumanInputResult, InstanceRoster, MissedTurn, OperationReceipt, Path, Result, SeatId,
+    StaleView, Value, ViewGuard, ViewPerspective, MAX_AGENT_VIEW_BYTES, MAX_VIEW_FRAME_BYTES,
 };
 
 impl ActiveInstance {
@@ -47,7 +47,8 @@ impl ActiveInstance {
     }
 
     /// The `agent_view` with the committed-state version it was read at, atomically:
-    /// a mutation bound to this version is rejected once any engine operation commits.
+    /// a mutation bound to this version is rejected once an engine operation commits
+    /// that changes the environment's state.
     /// # Errors
     /// Returns worker failures, a recovery-required state, or an oversized view.
     pub async fn agent_view_versioned(&self, participant: &SeatId) -> Result<(u64, Value)> {
@@ -58,9 +59,39 @@ impl ActiveInstance {
 
     /// The committed-state version: it advances with every engine operation
     /// receipt (action, input or initialization) and with nothing else. Python
-    /// namespaces, turn accounting and direct messages are not engine state.
+    /// namespaces, turn accounting and direct messages are not engine state. A
+    /// mutation bound to an older version is refused only when the engine state
+    /// changed after it; a rejected operation commits a receipt but changes nothing.
     pub async fn version(&self) -> u64 {
         self.runtime.lock().await.checkpoint.next_sequence
+    }
+
+    /// A live viewer frame for `perspective` with the committed-state version it
+    /// was read at, atomically, or `None` when the environment defines no `frame`.
+    /// # Errors
+    /// Rejects unknown seats, worker failures, a recovery-required state, and
+    /// frames that are not JSON objects or exceed [`MAX_VIEW_FRAME_BYTES`].
+    pub async fn frame_versioned(
+        &self,
+        perspective: &ViewPerspective,
+    ) -> Result<(u64, Option<Value>)> {
+        let participant = match perspective {
+            ViewPerspective::Public => SeatId::legacy_human(),
+            ViewPerspective::Seat { seat } => seat.clone(),
+        };
+        if let ViewPerspective::Seat { seat } = perspective {
+            if !self.roster().seats.iter().any(|entry| &entry.id == seat) {
+                bail!("unknown frame seat");
+            }
+        }
+        let (version, frame) = self
+            .request_view("frame", &participant, json!({"perspective":perspective}))
+            .await?;
+        if frame.is_null() {
+            return Ok((version, None));
+        }
+        check_frame(&frame)?;
+        Ok((version, Some(frame)))
     }
 
     async fn read_view(&self, method: &str, participant: &SeatId) -> Result<(u64, Value)> {
@@ -72,13 +103,22 @@ impl ActiveInstance {
         {
             bail!("unknown observation seat");
         }
+        self.request_view(method, participant, json!({})).await
+    }
+
+    async fn request_view(
+        &self,
+        method: &str,
+        participant: &SeatId,
+        params: Value,
+    ) -> Result<(u64, Value)> {
         let mut runtime = self.runtime.lock().await;
         if runtime.failed || runtime.closed {
             bail!("instance is closed or requires recovery");
         }
         let response = runtime
             .worker
-            .request(method, participant, json!({}), self.shutdown.clone(), None)
+            .request(method, participant, params, self.shutdown.clone(), None)
             .await;
         match response {
             Ok(response) => value(response).map(|view| (runtime.checkpoint.next_sequence, view)),
@@ -210,6 +250,34 @@ impl ActiveInstance {
         Ok(result)
     }
 
+    /// Report that `seat`'s turn ended without an action while the environment
+    /// waited on it, as a committed operation: the environment may warn the seat,
+    /// act for it, or change nothing. Only for manifests declaring `missed_turns`.
+    /// # Errors
+    /// Rejects undeclared support, unknown seats, domain rejection, or uncertain operations.
+    pub async fn missed_turn(
+        &self,
+        seat: &SeatId,
+        report: MissedTurn,
+        operation_id: &str,
+    ) -> Result<Value> {
+        if !self.definition.manifest.missed_turns {
+            bail!("environment does not handle missed turns");
+        }
+        if !self.roster().seats.iter().any(|entry| &entry.id == seat) {
+            bail!("unknown missed-turn seat");
+        }
+        self.operation(
+            "missed_turn",
+            seat,
+            json!(report),
+            operation_id,
+            CancellationToken::new(),
+            ViewGuard::Unbound,
+        )
+        .await
+    }
+
     // Keep intent dispatch, outcome validation and the atomic commit in one transaction.
     #[allow(clippy::too_many_lines)]
     pub(super) async fn operation(
@@ -240,10 +308,12 @@ impl ActiveInstance {
             bail!("environment has finished");
         }
         // Checked under the lock that serializes commits, before any intent is written
-        // or environment code runs, so a refusal leaves no trace.
+        // or environment code runs, so a refusal leaves no trace. A view is stale once
+        // the engine state it showed has changed; operations that left the state as it
+        // was, such as rejected actions, do not invalidate it.
         if let ViewGuard::Version(expected) = guard {
             let current = runtime.checkpoint.next_sequence;
-            if expected != current {
+            if expected > current || expected < runtime.state_since {
                 return Err(StaleView { expected, current }.into());
             }
         }
@@ -366,11 +436,24 @@ impl ActiveInstance {
         }
         checkpoint.snapshot = snapshot;
         checkpoint.receipts.insert(id.into(), receipt.clone());
+        // The history row precedes its checkpoint; readers ignore rows past the commit.
+        let runtime = &mut *runtime;
+        if let Err(error) = runtime.history.record(
+            (sequence - 1, &runtime.checkpoint.snapshot),
+            sequence,
+            &checkpoint.snapshot,
+        ) {
+            runtime.failed = true;
+            return Err(error.context("snapshot history write failed; explicit recovery required"));
+        }
         if let Err(error) = write_json(&self.path.join("checkpoint.json"), &checkpoint) {
             runtime.failed = true;
             return Err(error.context("checkpoint write failed; explicit recovery required"));
         }
         runtime.failed = checkpoint.requires_recovery;
+        if checkpoint.snapshot != runtime.checkpoint.snapshot {
+            runtime.state_since = checkpoint.next_sequence;
+        }
         runtime.checkpoint = checkpoint;
         self.commits.send_replace(sequence);
         receipt_value(&receipt, &request)
@@ -452,6 +535,18 @@ impl ActiveInstance {
         }
         result
     }
+}
+
+/// Reject a live viewer frame that is not an object or is too large to stream.
+pub(super) fn check_frame(frame: &Value) -> Result<()> {
+    if !frame.is_object() {
+        bail!("frame(perspective) must return a JSON object");
+    }
+    let bytes = serde_json::to_vec(frame)?.len();
+    if bytes > MAX_VIEW_FRAME_BYTES {
+        bail!("frame is {bytes} bytes; keep it under {MAX_VIEW_FRAME_BYTES}");
+    }
+    Ok(())
 }
 
 /// Reject a view too large to resend on every turn.

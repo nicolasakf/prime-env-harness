@@ -65,6 +65,7 @@ impl EnvironmentStore {
             ]))?,
             direct_messages: None,
             agent_context: pa_types::environments::AgentContext::default(),
+            missed_turns: false,
             python_execution,
             recommended_backend: if python_execution {
                 pa_types::environments::ExecutionBackend::Docker
@@ -287,6 +288,14 @@ impl EnvironmentStore {
     /// Returns invalid identifiers and corrupt checkpoints.
     pub fn instance_config(&self, id: &str) -> Result<Option<Value>> {
         initialization_config(&self.instance_path(id)?)
+    }
+
+    /// Every committed engine snapshot of an instance, ordered by operation
+    /// sequence; sequences recorded before snapshot history existed are absent.
+    /// # Errors
+    /// Returns invalid identifiers and corrupt checkpoints or history rows.
+    pub fn snapshot_history(&self, id: &str) -> Result<Vec<(u64, Value)>> {
+        crate::snapshot_history::read(&self.instance_path(id)?)
     }
 
     /// Resolve the durable directory for an instance.

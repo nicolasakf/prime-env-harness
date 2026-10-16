@@ -43,6 +43,20 @@ class Environment(Protocol):
     # sees each turn: current state plus a bounded history summary, filtered for
     # the seat. Defaults to observe(). Keep it under 32 KiB.
     # def agent_view(self, participant: Participant) -> Json | Awaitable[Json]: ...
+    # Optional. What a live viewer draws: {"kind": "public"} or
+    # {"kind": "seat", "seat": id}. Filter it like observe(); without it the
+    # run has no live view. Return a JSON object under 1 MiB.
+    # def frame(self, perspective: Json) -> Json | Awaitable[Json]: ...
+    # Optional, with manifest "missed_turns": true. Called when an awaited agent
+    # seat's turn ends without an action. report is {"cause": "idle" | "deadline"
+    # | "suspended", "misses": consecutive misses including this one, "limit": host
+    # re-prompts}. Warn the seat with notify(..., wake=True), act for it, or do
+    # nothing; without a wake from here the host re-prompts generically, and once
+    # misses exceed limit it stops the run unless this call resolved the seat's turn.
+    # "suspended" means the builder took the seat out of play: it is reported once
+    # per progress revision and never re-prompted, so act for the seat to keep the
+    # run moving; otherwise the run stalls until the builder acts or resumes it.
+    # def missed_turn(self, participant: Participant, report: Json) -> Json | Awaitable[Json]: ...
     def handle_input(self, participant: Participant, text: str) -> InputResult | SeatInputResult | Awaitable[InputResult | SeatInputResult]: ...
     def invoke(self, participant: Participant, action: str, arguments: Json) -> Json | Awaitable[Json]: ...
     def snapshot(self) -> Json | Awaitable[Json]: ...
@@ -83,7 +97,7 @@ def _begin_request(method):
 
 
 def _mutation_metadata():
-    if _request_method not in (None, "initialize", "invoke", "handle_input"):
+    if _request_method not in (None, "initialize", "invoke", "handle_input", "missed_turn"):
         raise ValueError("notifications and completion require a committed operation")
 
 

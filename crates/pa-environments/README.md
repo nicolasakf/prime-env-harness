@@ -5,7 +5,7 @@ receipts, and local/Docker language workers. Depends on pa-types only among
 workspace crates. Model execution belongs to pa-core; supervision to pa-daemon;
 terminal rendering to pa-tui.
 
-Public API: EnvironmentStore, EnvironmentManager, ActiveInstance, Worker, TableLog,
+Public API: EnvironmentStore (including `snapshot_history`), EnvironmentManager, ActiveInstance, Worker, TableLog,
 DeliveryCursor, default_roster, validate_roster, and
 the host-call callback used by trusted integration adapters.
 
@@ -28,6 +28,12 @@ describe_actions, observe, handle_input, invoke, snapshot, restore, and dispose.
 `observation` is the human-visible response. The daemon also hides participant
 tool responses and arguments. Public action schemas must not list private state.
 
+`missed_turns` (manifest, protocol 2) declares an optional `missed_turn(seat, report)`
+method; `ActiveInstance::missed_turn` runs it as a committed operation with a
+`MissedTurn` report, and validation checks that the runner defines it. The daemon
+decides when a turn was missed, including the `suspended` cause for a seat the
+builder took out of play.
+
 `agent_context` (manifest, protocol 2) chooses how an agent seat's model is fed:
 `conversation` (default) resends the seat transcript each request; `stateless` sends
 only the optional `agent_view(seat)` (default `observe`, at most 32 KiB, checked by
@@ -39,8 +45,10 @@ sequence, which advances with every engine operation receipt and nothing else.
 `observe_versioned` / `agent_view_versioned` read a view and its version atomically,
 and `invoke_guarded` / `input_seat_guarded` take a `ViewGuard`: with
 `ViewGuard::Version(v)` the check runs under the mutation lock before any intent is
-written or environment code runs, and a mismatch returns the `StaleView` error with
-nothing executed. A committed operation ID returns its receipt before the check.
+written or environment code runs. The call is refused with the `StaleView` error, with
+nothing executed, only when an operation committed after version `v` changed the engine
+snapshot; operations that left it unchanged, such as rejected actions, keep older views
+valid. A committed operation ID returns its receipt before the check.
 `ViewGuard::Unbound` (the default of `invoke` / `input_seat`) is for builders and tests;
 model-driven seats always supply a version. The checkpoint records `progress_sequence`,
 the receipt that published the current `progress`, which the host uses to revalidate
@@ -63,6 +71,15 @@ persist their creation time in Unix milliseconds. Older metadata uses the file's
 creation time, falling back to modification time when creation time is unavailable.
 ActiveInstance serializes mutations and owns an exclusive
 lock. Intent records precede dispatch, and snapshots contain completion receipts.
+Each commit first appends its snapshot to `snapshots.jsonl` (a keyframe, then JSON
+Patch deltas against the previous committed sequence); rows past the committed
+sequence are ignored. `EnvironmentStore::snapshot_history` reconstructs every
+recorded state for replay. This is a new public API and adds no dependency.
+`ActiveInstance::frame_versioned` reads the environment's optional
+`frame(perspective)` (`ViewPerspective` in pa-types) with its committed-state version,
+or `None` when the environment defines none; validation calls it for every perspective
+when defined. `json_patch` exposes the history's delta encoding so live viewers can
+stream frames the same way. Both are new public API with no dependency.
 Repeated operation IDs return recorded results. RecoveryRequest records an
 explicitly reconciled snapshot and receipts; it never triggers redispatch.
 

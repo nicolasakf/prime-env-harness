@@ -38,10 +38,18 @@ for line in sys.stdin:
             result = environment.observe(participant)
         elif method == "agent_view":
             result = (getattr(environment, "agent_view", None) or environment.observe)(participant)
+        elif method == "frame":
+            render = getattr(environment, "frame", None)
+            result = render(params["perspective"]) if render else None
         elif method == "handle_input":
             result = environment.handle_input(participant, params["text"])
         elif method == "invoke":
             result = environment.invoke(participant, params["action"], params["arguments"])
+        elif method == "missed_turn":
+            handler = getattr(environment, "missed_turn", None)
+            if handler is None:
+                raise ValueError("unknown environment method")
+            result = handler(participant, params)
         elif method == "snapshot":
             result = environment.snapshot()
         elif method == "restore":

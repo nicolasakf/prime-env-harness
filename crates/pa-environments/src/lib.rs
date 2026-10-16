@@ -4,6 +4,7 @@ mod delivery;
 mod roster;
 mod runner;
 mod runtime;
+mod snapshot_history;
 mod store;
 mod table_log;
 
@@ -12,5 +13,6 @@ pub use delivery::DeliveryCursor;
 pub use roster::{default_roster, validate_roster};
 pub use runner::{HostCall, HostCallHandler, Worker};
 pub use runtime::{ActiveInstance, EnvironmentManager, StaleView, ViewGuard};
+pub use snapshot_history::json_patch;
 pub use store::EnvironmentStore;
 pub use table_log::TableLog;

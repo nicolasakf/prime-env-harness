@@ -414,3 +414,120 @@ async fn explicit_recovery_can_reconcile_initialization_without_a_checkpoint() {
     );
     resumed.leave().await.unwrap();
 }
+
+#[tokio::test]
+async fn every_committed_snapshot_is_replayable_across_resume() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = EnvironmentManager::new(root.path().into(), None).unwrap();
+    let policy = ExecutionPolicy::default();
+    let draft = manager
+        .store()
+        .create_legacy_draft(
+            "history",
+            EnvironmentLanguage::Python,
+            /*python_execution*/ false,
+            &policy,
+        )
+        .unwrap();
+    let selector = draft.to_str().unwrap();
+    manager.select_policy(selector, &policy).unwrap();
+    let report = manager.validate(selector, policy.clone()).await.unwrap();
+    assert!(report.passed, "{:?}", report.diagnostics);
+    manager.save(selector, "history").unwrap();
+    let active = manager
+        .enter_with_arguments("history", None, policy, json!({}))
+        .await
+        .unwrap();
+    let human = SeatId::legacy_human();
+    active
+        .invoke(
+            &human,
+            "increment",
+            json!({"amount":2}),
+            "first",
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    active.input("hello", "talk").await.unwrap();
+    let id = active.instance.id.clone();
+    active.leave().await.unwrap();
+    drop(active);
+    let resumed = manager.resume(&id).await.unwrap();
+    resumed
+        .invoke(
+            &human,
+            "increment",
+            json!({"amount":3}),
+            "second",
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    resumed.leave().await.unwrap();
+    assert_eq!(
+        manager.store().snapshot_history(&id).unwrap(),
+        vec![
+            (1, json!({"value":0})),
+            (2, json!({"value":2})),
+            (3, json!({"value":2})),
+            (4, json!({"value":5})),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn frames_are_optional_and_validated_when_defined() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = EnvironmentManager::new(root.path().into(), None).unwrap();
+    let policy = ExecutionPolicy::default();
+    let draft = |name: &str| {
+        manager
+            .store()
+            .create_draft(
+                name,
+                EnvironmentLanguage::Python,
+                /*python_execution*/ false,
+                &policy,
+            )
+            .unwrap()
+    };
+    let plain = draft("plain");
+    let selector = plain.to_str().unwrap();
+    manager.select_policy(selector, &policy).unwrap();
+    assert!(
+        manager
+            .validate(selector, policy.clone())
+            .await
+            .unwrap()
+            .passed
+    );
+    manager.save(selector, "plain").unwrap();
+    let active = manager.enter("plain", None, policy.clone()).await.unwrap();
+    assert_eq!(
+        active
+            .frame_versioned(&pa_types::environments::ViewPerspective::Public)
+            .await
+            .unwrap(),
+        (2, None)
+    );
+    active.leave().await.unwrap();
+
+    let broken = draft("broken");
+    let code = fs::read_to_string(broken.join("environment.py"))
+        .unwrap()
+        .replace(
+        "    def dispose(self):",
+        "    def frame(self, perspective):\n        return [perspective]\n\n    def dispose(self):",
+    );
+    fs::write(broken.join("environment.py"), code).unwrap();
+    let selector = broken.to_str().unwrap();
+    manager.select_policy(selector, &policy).unwrap();
+    let report = manager.validate(selector, policy).await.unwrap();
+    assert!(!report.passed);
+    assert!(
+        format!("{:?}", report.diagnostics).contains("must return a JSON object"),
+        "{:?}",
+        report.diagnostics
+    );
+}

@@ -3,13 +3,15 @@ use crate::runner::{
     command_output, docker_command, ensure_image, local_python, sanitized_command, validate_policy,
     NODE_IMAGE, PYTHON_IMAGE,
 };
+use crate::snapshot_history::{self, HistoryWriter};
 use crate::store::{component, content_hash, copy_sources, read_json, write_json};
 use crate::{EnvironmentStore, HostCallHandler, Worker};
 use anyhow::{bail, Context, Result};
 use pa_types::environments::{
     ActionDescriptor, AgentContext, Definition, EnvironmentLanguage, EnvironmentManifest,
     ExecutionBackend, ExecutionPolicy, HumanInputResult, Instance, InstanceCheckpoint,
-    InstanceRoster, OperationReceipt, RoleName, SeatId, ValidationReport, MAX_AGENT_VIEW_BYTES,
+    InstanceRoster, MissedTurn, MissedTurnCause, OperationReceipt, RoleName, SeatId,
+    ValidationReport, ViewPerspective, MAX_AGENT_VIEW_BYTES, MAX_VIEW_FRAME_BYTES,
     SUPPORTED_PROTOCOL_VERSIONS,
 };
 use serde_json::{json, Value};
@@ -315,7 +317,12 @@ impl EnvironmentManager {
                 fs::remove_file(snapshot)?;
             }
         }
-        write_json(&path.join("checkpoint.json"), &checkpoint)
+        write_json(&path.join("checkpoint.json"), &checkpoint)?;
+        let committed = checkpoint.next_sequence.saturating_sub(1);
+        if committed > 0 {
+            snapshot_history::record_keyframe(&path, committed, &checkpoint.snapshot)?;
+        }
+        Ok(())
     }
 
     /// Save only the latest successful validation of unchanged source.
@@ -511,6 +518,7 @@ impl EnvironmentManager {
         };
         let committed_sequence = checkpoint.next_sequence.saturating_sub(1);
         let commits = tokio::sync::watch::channel(committed_sequence).0;
+        let history = HistoryWriter::new(&path);
         let active = Arc::new(ActiveInstance {
             instance,
             definition,
@@ -518,7 +526,9 @@ impl EnvironmentManager {
             path,
             runtime: Mutex::new(InstanceRuntime {
                 worker,
+                history,
                 failed: checkpoint.requires_recovery && !inspect,
+                state_since: checkpoint.next_sequence,
                 checkpoint,
                 closed: false,
             }),
@@ -575,7 +585,12 @@ impl EnvironmentManager {
 
 struct InstanceRuntime {
     worker: Worker,
+    history: HistoryWriter,
     checkpoint: InstanceCheckpoint,
+    /// The version from which views show the current engine state: the
+    /// `next_sequence` after the last commit that changed the snapshot. Opening an
+    /// instance starts it at the current version, so views from before are stale.
+    state_since: u64,
     failed: bool,
     closed: bool,
 }

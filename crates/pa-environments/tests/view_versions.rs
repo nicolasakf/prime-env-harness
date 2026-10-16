@@ -298,6 +298,74 @@ async fn committed_operations_replay_and_rejected_ones_advance_the_version() {
     restored.leave().await.unwrap();
 }
 
+/// A rejected action commits a receipt but changes no state, so it cannot starve a
+/// seat that is still deciding: a view taken before it stays valid.
+#[tokio::test]
+async fn a_rejected_action_leaves_other_views_valid() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = EnvironmentManager::new(root.path().into(), None).unwrap();
+    let active = market(&manager).await;
+    let (open, _) = active
+        .agent_view_versioned(&seat("player-1"))
+        .await
+        .unwrap();
+    act(
+        &active,
+        "player-1",
+        "open_market",
+        json!({"bid":43,"ask":45}),
+        "open",
+        ViewGuard::Version(open),
+    )
+    .await
+    .unwrap();
+    let (deciding, _) = active
+        .agent_view_versioned(&seat("player-2"))
+        .await
+        .unwrap();
+    // Player 1 has nothing to do and keeps trying; every attempt is rejected.
+    for attempt in 0..3 {
+        let (spent, _) = active
+            .agent_view_versioned(&seat("player-1"))
+            .await
+            .unwrap();
+        act(
+            &active,
+            "player-1",
+            "open_market",
+            json!({"bid":40,"ask":50}),
+            &format!("repeat-{attempt}"),
+            ViewGuard::Version(spent),
+        )
+        .await
+        .unwrap_err();
+    }
+    assert_eq!(active.version().await, deciding + 3);
+    act(
+        &active,
+        "player-2",
+        "improve_market",
+        json!({"bid":43,"ask":44}),
+        "improve",
+        ViewGuard::Version(deciding),
+    )
+    .await
+    .unwrap();
+    // The accepted action changed the state, so player 1's older view is now stale.
+    let error = act(
+        &active,
+        "player-1",
+        "buy",
+        json!({}),
+        "late",
+        ViewGuard::Version(deciding),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.is::<StaleView>(), "{error:#}");
+    active.leave().await.unwrap();
+}
+
 /// Chat is an engine operation too: it invalidates views taken before it.
 #[tokio::test]
 async fn chat_invalidates_older_views() {

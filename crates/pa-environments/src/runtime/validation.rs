@@ -3,7 +3,8 @@ use super::{
     bail, content_hash, describe, fs, json, read_json, tempfile_path, validate_policy, value,
     write_json, ActionDescriptor, AgentContext, Arc, CancellationToken, Context,
     EnvironmentLanguage, EnvironmentManager, EnvironmentManifest, ExecutionPolicy, HostCallHandler,
-    Path, Result, SeatId, Uuid, ValidationReport, Value, Worker, SUPPORTED_PROTOCOL_VERSIONS,
+    MissedTurn, MissedTurnCause, Path, Result, SeatId, Uuid, ValidationReport, Value,
+    ViewPerspective, Worker, SUPPORTED_PROTOCOL_VERSIONS,
 };
 
 impl EnvironmentManager {
@@ -81,6 +82,9 @@ impl EnvironmentManager {
         if manifest.agent_context == AgentContext::Stateless && manifest.protocol_version != 2 {
             bail!("agent_context stateless requires protocol v2");
         }
+        if manifest.missed_turns && manifest.protocol_version != 2 {
+            bail!("missed_turns requires protocol v2");
+        }
         let roster = crate::default_roster(manifest)?;
         if policy.python_execution && !manifest.python_execution {
             bail!("definition does not declare participant Python capability");
@@ -101,6 +105,26 @@ impl EnvironmentManager {
                     let view = value(worker.request("agent_view", participant, json!({}), CancellationToken::new(), None).await?)?;
                     super::instance::check_agent_view(&view)?;
                 }
+            }
+            if manifest.protocol_version == 2 {
+                let perspectives = std::iter::once(ViewPerspective::Public).chain(
+                    roster.seats.iter().map(|seat| ViewPerspective::Seat { seat: seat.id.clone() }),
+                );
+                for perspective in perspectives {
+                    let response = worker.request("frame", &SeatId::legacy_human(), json!({"perspective":perspective}), CancellationToken::new(), None).await?;
+                    // A draft scaffolded before live views existed has no runner support for frame.
+                    if response["error"] == "unknown environment method" { break; }
+                    let frame = value(response)?;
+                    if frame.is_null() { break; }
+                    super::instance::check_frame(&frame).with_context(|| format!("frame({})", json!(perspective)))?;
+                }
+            }
+            if manifest.missed_turns {
+                let seat = roster.seats.first().map(|seat| seat.id.clone()).context("roster seat")?;
+                let report = MissedTurn { cause: MissedTurnCause::Idle, misses: 1, limit: 1 };
+                // A domain refusal is the environment's call; a missing handler is a defect.
+                let response = worker.request("missed_turn", &seat, json!(report), CancellationToken::new(), None).await?;
+                if response["error"].as_str().is_some_and(|error| error.ends_with("unknown environment method")) { bail!("manifest declares missed_turns but the environment defines no missed_turn"); }
             }
             // Restoration is tested in a NEW worker, not against its own live state.
             worker.stop().await?;
