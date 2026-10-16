@@ -1,4 +1,5 @@
 //! Authenticated seat calls and human/builder control surfaces.
+use super::interventions::Requester;
 use super::{
     authenticate, read, AgentContext, Arc, Context, Delivery, DeliveryKind, EnvironmentHost,
     NoticeTarget, OccupantKind, Result, RoleName, RunPhase, SeatCall, SeatId, SeatReply, Value,
@@ -46,6 +47,18 @@ impl EnvironmentHost {
         } else {
             Some(self.gate.lock().await)
         };
+        // A suspended seat's own calls cannot change the run until the builder
+        // resumes it; reads stay available.
+        if matches!(
+            call,
+            SeatCall::Invoke { .. }
+                | SeatCall::Say { .. }
+                | SeatCall::Python { .. }
+                | SeatCall::Message { .. }
+        ) && self.state.lock().await.suspended.contains_key(seat)
+        {
+            bail!("{seat} is suspended by the run's builder and cannot act until resumed");
+        }
         let feature = match &call {
             SeatCall::Say { .. } => Some("environment_say"),
             SeatCall::Message { .. } => Some("environment_direct_message"),
@@ -92,10 +105,12 @@ impl EnvironmentHost {
                 if state.phase != RunPhase::Running {
                     bail!("environment run is not running");
                 }
-                if state
-                    .settled
-                    .get(seat)
-                    .is_some_and(|seq| *seq >= through_seq)
+                // A wake that raced a suspension never starts a model turn.
+                if state.suspended.contains_key(seat)
+                    || state
+                        .settled
+                        .get(seat)
+                        .is_some_and(|seq| *seq >= through_seq)
                 {
                     return Ok(SeatReply {
                         result: json!({"settled":true}),
@@ -459,12 +474,19 @@ impl EnvironmentHost {
         })
     }
 
-    async fn require_mutation(&self, id: &str) -> Result<()> {
+    pub(super) async fn require_mutation(&self, id: &str) -> Result<()> {
         let checkpoint = self.instance.checkpoint().await;
         if checkpoint.receipts.contains_key(id) {
             return Ok(());
         }
         self.require_running().await?;
+        self.within_operation_limit(&checkpoint)
+    }
+
+    pub(super) fn within_operation_limit(
+        &self,
+        checkpoint: &pa_types::environments::InstanceCheckpoint,
+    ) -> Result<()> {
         if checkpoint.receipts.len().saturating_sub(1) as u64
             >= self.instance.roster().limits.max_operations
         {
@@ -509,6 +531,7 @@ impl EnvironmentHost {
                 )?)
             }
             "status" | "observe" => self.status().await,
+            "view" => self.live_view(parameters).await,
             "act" | "say" | "msg" => {
                 let seat = self
                     .human()
@@ -572,6 +595,26 @@ impl EnvironmentHost {
                 )
             }
             "pause" | "resume_run" | "stop" => self.run_control(operation, "human").await,
+            // Interventions belong to the run's builder, so even the human at the
+            // builder prompt goes through the builder token; a player at the table
+            // can never act for another seat.
+            "builder_act_for_seat" | "builder_suspend_seat" | "builder_resume_seat" => {
+                authenticate(
+                    &self.builder_token,
+                    parameters["builder_token"].as_str().unwrap_or_default(),
+                )?;
+                let requester = if parameters["requester"] == "human" {
+                    Requester::Human
+                } else {
+                    Requester::Builder
+                };
+                self.intervene(
+                    operation.trim_start_matches("builder_"),
+                    parameters,
+                    requester,
+                )
+                .await
+            }
             "builder_pause" | "builder_resume_run" | "builder_stop" => {
                 authenticate(
                     &self.builder_token,
@@ -627,6 +670,36 @@ impl EnvironmentHost {
         }
     }
 
+    /// Routes a seat intervention's wire parameters to its handler.
+    async fn intervene(
+        self: &Arc<Self>,
+        operation: &str,
+        parameters: &Value,
+        requester: Requester,
+    ) -> Result<Value> {
+        let seat: SeatId =
+            serde_json::from_value(parameters["seat"].clone()).context("seat required")?;
+        let reason = parameters["reason"].as_str().unwrap_or_default();
+        match operation {
+            "act_for_seat" => {
+                self.act_for_seat(
+                    &seat,
+                    parameters["action"].as_str().context("action required")?,
+                    parameters
+                        .get("arguments")
+                        .cloned()
+                        .unwrap_or_else(|| json!({})),
+                    reason,
+                    requester,
+                )
+                .await
+            }
+            "suspend_seat" => self.suspend_seat(&seat, reason, requester).await,
+            "resume_seat" => self.resume_seat(&seat, requester).await,
+            _ => bail!("unknown seat intervention"),
+        }
+    }
+
     /// Applies a run control for `requester` ("human" at the table, or "builder"
     /// through the token-authenticated builder operations).
     async fn run_control(self: &Arc<Self>, operation: &str, requester: &str) -> Result<Value> {
@@ -645,11 +718,13 @@ impl EnvironmentHost {
             checkpoint.progress.as_ref(),
         ) {
             for seat_id in progress.waiting_for.iter().filter(|id| {
-                self.instance
-                    .roster()
-                    .seats
-                    .iter()
-                    .any(|seat| seat.id == **id && seat.occupant == OccupantKind::Agent)
+                !state.suspended.contains_key(*id)
+                    && self
+                        .instance
+                        .roster()
+                        .seats
+                        .iter()
+                        .any(|seat| seat.id == **id && seat.occupant == OccupantKind::Agent)
             }) {
                 if self.seat_inbox(seat_id)?.pending.is_none() && !self.has_unseen_wake(seat_id)? {
                     self.wake_seat(
@@ -667,7 +742,10 @@ impl EnvironmentHost {
             _ => unreachable!("matched controls"),
         };
         state.reason = Some(format!("{requester} requested {operation}"));
+        state.paused_automatically = false;
         if operation == "resume_run" {
+            // A resumed run that stops again is news to the builder again.
+            state.builder_notified = None;
             state.no_progress_turns = 0;
             state.busy.clear();
             state.idle_retries.clear();
@@ -696,13 +774,10 @@ impl EnvironmentHost {
             self.abort_seats().await?;
         }
         if operation == "resume_run" {
-            for seat in self
-                .instance
-                .roster()
-                .seats
-                .into_iter()
-                .filter(|seat| seat.occupant == OccupantKind::Agent)
-            {
+            let suspended = self.state.lock().await.suspended.clone();
+            for seat in self.instance.roster().seats.into_iter().filter(|seat| {
+                seat.occupant == OccupantKind::Agent && !suspended.contains_key(&seat.id)
+            }) {
                 let path = self
                     .instance
                     .path()

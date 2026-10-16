@@ -149,6 +149,83 @@ async fn the_idle_park_releases_a_parent_owned_childs_kernel_only() {
     );
 }
 
+/// `notifyOnIdle` with a client attached: the park after work a person sent
+/// rides one `idle_notification` session event (the client posts it through
+/// its terminal, so the notice comes from that app); an unattended heartbeat
+/// fire parks silently. Only the attached arm runs here, so the test never
+/// posts a real desktop notification. The positive arm waits for the event
+/// (the bound is its failure bound); the heartbeat arm has no readiness
+/// event to await, so the bound itself is the absence proof.
+#[tokio::test]
+async fn an_attached_session_gets_the_idle_notice_only_after_person_sent_work() {
+    async fn notices_after(priority: QueuePriority, queue_key: Option<&str>) -> Vec<Value> {
+        let agent_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            agent_dir.path().join("settings.json"),
+            r#"{"notifyOnIdle":true}"#,
+        )
+        .unwrap();
+        let mut runner = burst_runner(Arc::new(AdmitProbeEngine::default()));
+        runner.passivation.agent_dir = agent_dir.path().to_path_buf();
+        {
+            let mut core = runner.core.lock().unwrap();
+            core.cwd = agent_dir
+                .path()
+                .join("poker")
+                .to_string_lossy()
+                .into_owned();
+            core.attached_client_ids.push("client-1".to_string());
+            core.follow_up.push_back(QueuedItem {
+                priority,
+                preview: None,
+                message: "work".to_string(),
+                custom_message: None,
+                agent_message: None,
+                queue_key: queue_key.map(str::to_string),
+                admission_id: None,
+                images: Vec::new(),
+                done: None,
+                queue_visible: true,
+                policy: TurnPolicy::Queued,
+                forced_batch: false,
+            });
+        }
+        let mut subscription = runner.events.subscribe();
+        let task = tokio::spawn(async move {
+            runner.run().await;
+        });
+        let mut notices = Vec::new();
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(2000), async {
+            while let Ok(frame) = subscription.recv().await {
+                let Ok(outbound) = serde_json::from_slice::<Value>(&frame.payload) else {
+                    continue;
+                };
+                if outbound["event"]["type"] == "idle_notification" {
+                    notices.push(outbound["event"].clone());
+                    break;
+                }
+            }
+        })
+        .await;
+        task.abort();
+        notices
+    }
+
+    assert_eq!(
+        notices_after(QueuePriority::Human, None).await,
+        vec![json!({
+            "type": "idle_notification",
+            "title": "Prime Env chat in poker",
+            "body": "Waiting for your review or reply",
+        })],
+    );
+    assert_eq!(
+        notices_after(QueuePriority::Background, Some("heartbeat:job-1")).await,
+        Vec::<Value>::new(),
+        "an unattended heartbeat fire must not notify"
+    );
+}
+
 /// A recording engine for the admission-gate tests: every `run_prompt`
 /// call lands in `prompts` (the served-path probe — a racing admission
 /// reaches the engine, a parked one never does).

@@ -43,7 +43,7 @@ async fn capabilities_direct_messages_controls_and_emitted_telemetry() {
     let mut telemetry_config = TelemetryClientConfig::new("test");
     telemetry_config.sinks = vec![sink.clone()];
     let telemetry = TelemetryClient::spawn(telemetry_config).unwrap();
-    let host = Arc::new(EnvironmentHost { table: TableLog::open(instance.path()).unwrap(), state: Mutex::new(serde_json::from_value(json!({"phase":"running","reason":null,"operations":0,"wakes":{},"busy":{},"no_progress_turns":0,"revision":null,"started_at":crate::util::now_ms(),"settled":{}})).unwrap()), gate: Mutex::new(()), link: SupervisorLink::new(root.path().join("unused.sock")), builder_token: "b".repeat(64), host_id: "host".into(), telemetry: Some(telemetry.clone()), defaults: json!({}), seats: Mutex::new(BTreeMap::new()), python_cancellations: Mutex::new(BTreeMap::new()), changed: Notify::new(), announced_phase: std::sync::Mutex::new(None), shutdown: CancellationToken::new(), view: Arc::new(|_| Ok(())), instance });
+    let host = Arc::new(EnvironmentHost { table: TableLog::open(instance.path()).unwrap(), state: Mutex::new(serde_json::from_value(json!({"phase":"running","reason":null,"operations":0,"wakes":{},"busy":{},"no_progress_turns":0,"revision":null,"started_at":crate::util::now_ms(),"settled":{}})).unwrap()), gate: Mutex::new(()), link: SupervisorLink::new(root.path().join("unused.sock")), builder_token: "b".repeat(64), host_id: "host".into(), telemetry: Some(telemetry.clone()), defaults: json!({}), seats: Mutex::new(BTreeMap::new()), python_cancellations: Mutex::new(BTreeMap::new()), changed: Notify::new(), live: Mutex::new(None), announced_phase: std::sync::Mutex::new(None), shutdown: CancellationToken::new(), view: Arc::new(|_| Ok(())), instance });
     let agent = SeatId::try_from("agent-1".to_owned()).unwrap();
     let human = SeatId::try_from("human-1".to_owned()).unwrap();
     write(
@@ -248,9 +248,25 @@ async fn capabilities_direct_messages_controls_and_emitted_telemetry() {
     host.instance.leave().await.unwrap();
 }
 
+/// Who answers an awaited seat's missed turn in [`waiting_host`].
+#[derive(Clone, Copy)]
+pub(super) enum MissedTurns {
+    Host,
+    /// The manifest declares `missed_turns`: the first miss warns the seat, the
+    /// second is left to the host, and a later one ends the seat's turn once a
+    /// `tick` set `resolve`. A suspended seat's turn is ended the same way, at
+    /// once, when `resolve` is set.
+    Environment,
+}
+
 /// A host whose `tick` action (human-only) reports progress waiting on the seat
 /// named by `waiting` (default `agent-1`), or finishes when `finished` is set.
-async fn waiting_host(root: &std::path::Path, phase: RunPhase) -> Arc<EnvironmentHost> {
+/// Its `play` action (agent-only) ends the wait.
+pub(super) async fn waiting_host(
+    root: &std::path::Path,
+    phase: RunPhase,
+    missed_turns: MissedTurns,
+) -> Arc<EnvironmentHost> {
     let manager = pa_environments::EnvironmentManager::new(root.into(), None).unwrap();
     let draft = manager
         .store()
@@ -261,23 +277,42 @@ async fn waiting_host(root: &std::path::Path, phase: RunPhase) -> Arc<Environmen
             &ExecutionPolicy::default(),
         )
         .unwrap();
-    let environment = r#"from sdk import progress, finish
+    let environment = r#"from sdk import notify, progress, finish
 class E:
     def initialize(self, params):
         self.revision = 0
+        self.resolve = False
         return {}
-    def describe_actions(self): return [{"name":"tick","description":"tick","input_schema":{"type":"object"},"output_schema":{"type":"object"},"roles":["human"]}]
+    def missed_turn(self, participant, report):
+        if report["cause"] == "suspended":
+            if self.resolve:
+                self.revision += 1
+                progress(self.revision, waiting_for=[])
+            return {}
+        if report["misses"] == 1:
+            notify([participant], "Missed once; act now.", wake=True)
+        elif report["misses"] > report["limit"] and self.resolve:
+            self.revision += 1
+            progress(self.revision, waiting_for=[])
+        return {}
+    def describe_actions(self): return [{"name":"tick","description":"tick","input_schema":{"type":"object"},"output_schema":{"type":"object"},"roles":["human"]},{"name":"play","description":"play","input_schema":{"type":"object"},"output_schema":{"type":"object"},"roles":["agent"]}]
     def observe(self, participant): return {"value":0}
     def handle_input(self, participant, text): return {"observation":{}}
     def invoke(self, participant, action, arguments):
+        if action == "play":
+            self.revision += 1
+            progress(self.revision, waiting_for=[])
+            return {"played": participant}
         if arguments.get("finished"):
             finish("done")
+        self.resolve = arguments.get("resolve", False)
         self.revision += 1
         progress(self.revision, waiting_for=[arguments.get("waiting", "agent-1")])
         return {}
-    def snapshot(self): return {"revision":self.revision}
+    def snapshot(self): return {"revision":self.revision,"resolve":self.resolve}
     def restore(self, snapshot):
         self.revision = snapshot["revision"]
+        self.resolve = snapshot["resolve"]
         return {}
     def dispose(self): return {}
 environment=E()
@@ -285,8 +320,16 @@ environment=E()
     std::fs::write(draft.join("environment.py"), environment).unwrap();
     std::fs::write(
         draft.join("checks.py"),
-        "from environment import E\nenvironment = E()\nenvironment.initialize({})\nassert environment.snapshot() == {\"revision\": 0}\n",
+        "from environment import E\nenvironment = E()\nenvironment.initialize({})\nassert environment.snapshot() == {\"revision\": 0, \"resolve\": False}\n",
     ).unwrap();
+    if let MissedTurns::Environment = missed_turns {
+        let path = draft.join("environment.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        manifest["protocol_version"] = json!(2);
+        manifest["missed_turns"] = json!(true);
+        std::fs::write(&path, manifest.to_string()).unwrap();
+    }
     let validation = manager
         .validate(draft.to_str().unwrap(), ExecutionPolicy::default())
         .await
@@ -312,7 +355,7 @@ environment=E()
         gate: Mutex::new(()), link: SupervisorLink::new(root.join("unused.sock")),
         builder_token: "b".repeat(64), host_id: "host".into(), telemetry: None,
         defaults: json!({}), seats: Mutex::new(BTreeMap::new()),
-        python_cancellations: Mutex::new(BTreeMap::new()), changed: Notify::new(), announced_phase: std::sync::Mutex::new(None),
+        python_cancellations: Mutex::new(BTreeMap::new()), changed: Notify::new(), live: Mutex::new(None), announced_phase: std::sync::Mutex::new(None),
         shutdown: CancellationToken::new(), view: Arc::new(|_| Ok(())), instance,
     })
 }
@@ -320,7 +363,7 @@ environment=E()
 #[tokio::test]
 async fn stalled_resume_wakes_waiting_agent_only_when_no_wake_is_unseen() {
     let root = tempfile::tempdir().unwrap();
-    let host = waiting_host(root.path(), RunPhase::Stalled).await;
+    let host = waiting_host(root.path(), RunPhase::Stalled, MissedTurns::Host).await;
     let agent = SeatId::try_from("agent-1".to_owned()).unwrap();
     let human = SeatId::try_from("human-1".to_owned()).unwrap();
     host.instance
@@ -475,10 +518,60 @@ fn retry_wakes(host: &EnvironmentHost) -> Vec<(NoticeTarget, DeliveryKind, bool)
         .collect()
 }
 
+/// In a simultaneous round other seats advance the revision without waking the
+/// seat still owed a submission. Its idle turn must still be re-prompted, or the
+/// round waits on it forever.
+#[tokio::test]
+async fn awaited_agent_is_reprompted_when_others_advanced_the_round_during_its_idle_turn() {
+    let root = tempfile::tempdir().unwrap();
+    let host = waiting_host(root.path(), RunPhase::Running, MissedTurns::Host).await;
+    let agent = SeatId::try_from("agent-1".to_owned()).unwrap();
+    let human = SeatId::try_from("human-1".to_owned()).unwrap();
+    for id in ["round-opens", "peer-submits"] {
+        if id == "peer-submits" {
+            if let Some(last) = host.table.all_since(0).unwrap().last() {
+                pa_environments::DeliveryCursor::load(host.instance.path(), &agent)
+                    .unwrap()
+                    .acknowledge(host.instance.path(), &agent, last.seq)
+                    .unwrap();
+            }
+            host.call(&agent, SeatCall::TurnStarted { through_seq: 1 })
+                .await
+                .unwrap();
+        }
+        host.instance
+            .invoke(
+                &human,
+                "tick",
+                json!({"waiting":"agent-1"}),
+                id,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        host.table
+            .materialize(&host.instance.checkpoint().await)
+            .unwrap();
+    }
+    host.call(&agent, SeatCall::TurnSettled { through_seq: 1 })
+        .await
+        .unwrap();
+    assert_eq!(
+        retry_wakes(&host),
+        vec![(
+            NoticeTarget::Seats(vec![agent.clone()]),
+            DeliveryKind::Status,
+            true
+        )]
+    );
+    assert_eq!(host.state.lock().await.idle_retries.get(&agent), Some(&1));
+    host.instance.leave().await.unwrap();
+}
+
 #[tokio::test]
 async fn awaited_agent_is_reprompted_after_idle_turns_until_the_budget_stalls_the_run() {
     let root = tempfile::tempdir().unwrap();
-    let host = waiting_host(root.path(), RunPhase::Running).await;
+    let host = waiting_host(root.path(), RunPhase::Running, MissedTurns::Host).await;
     let agent = SeatId::try_from("agent-1".to_owned()).unwrap();
     let human = SeatId::try_from("human-1".to_owned()).unwrap();
     let retry = (
@@ -574,5 +667,127 @@ async fn awaited_agent_is_reprompted_after_idle_turns_until_the_budget_stalls_th
         );
     }
     assert_eq!(retry_wakes(&host).len(), 3);
+    host.instance.leave().await.unwrap();
+}
+
+/// The reports the environment's `missed_turn` received, in commit order.
+pub(super) async fn missed_turn_reports(host: &EnvironmentHost) -> Vec<serde_json::Value> {
+    let mut receipts: Vec<_> = host
+        .instance
+        .checkpoint()
+        .await
+        .receipts
+        .into_values()
+        .filter(|receipt| receipt.request["method"] == "missed_turn")
+        .collect();
+    receipts.sort_by_key(|receipt| receipt.sequence);
+    receipts
+        .into_iter()
+        .map(|receipt| receipt.request["params"].clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn an_environment_answers_missed_turns_before_the_host_reprompts_or_stalls() {
+    let root = tempfile::tempdir().unwrap();
+    let host = waiting_host(root.path(), RunPhase::Running, MissedTurns::Environment).await;
+    let agent = SeatId::try_from("agent-1".to_owned()).unwrap();
+    let human = SeatId::try_from("human-1".to_owned()).unwrap();
+    let tick = |id: &'static str, arguments: serde_json::Value| {
+        let host = Arc::clone(&host);
+        let human = human.clone();
+        async move {
+            host.instance
+                .invoke(&human, "tick", arguments, id, CancellationToken::new())
+                .await
+                .unwrap();
+            host.table
+                .materialize(&host.instance.checkpoint().await)
+                .unwrap();
+        }
+    };
+    let warnings = |host: &EnvironmentHost| {
+        host.table
+            .all_since(0)
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.message.as_deref() == Some("Missed once; act now."))
+            .map(|row| (row.to, row.wake))
+            .collect::<Vec<_>>()
+    };
+    let warning = (NoticeTarget::Seats(vec![agent.clone()]), true);
+    let retry = (
+        NoticeTarget::Seats(vec![agent.clone()]),
+        DeliveryKind::Status,
+        true,
+    );
+    let report = |misses: u64| json!({"cause":"idle","misses":misses,"limit":2});
+
+    // First miss: the environment's own warning replaces the generic re-prompt.
+    tick("await-agent", json!({})).await;
+    idle_turn(&host, &agent, 1).await;
+    assert!(host.settle_missed_turns().await.unwrap());
+    assert_eq!(warnings(&host), vec![warning.clone()]);
+    assert!(retry_wakes(&host).is_empty());
+
+    // Second miss: the environment does nothing, so the host re-prompts.
+    idle_turn(&host, &agent, 2).await;
+    host.settle_missed_turns().await.unwrap();
+    assert_eq!(retry_wakes(&host), vec![retry.clone()]);
+
+    // Past the budget with the turn unresolved, the run stalls as before.
+    idle_turn(&host, &agent, 3).await;
+    host.settle_missed_turns().await.unwrap();
+    {
+        let state = host.state.lock().await;
+        assert_eq!(
+            (state.phase.clone(), state.reason.as_deref()),
+            (
+                RunPhase::Stalled,
+                Some("agent-1 made no progress after 2 re-prompts")
+            )
+        );
+    }
+    assert_eq!(
+        missed_turn_reports(&host).await,
+        vec![report(1), report(2), report(3)]
+    );
+
+    // Resuming restores the budget; past it, the environment ends the turn itself.
+    host.client_operation("resume_run", &json!({}))
+        .await
+        .unwrap();
+    tick("await-and-resolve", json!({"resolve":true})).await;
+    for through_seq in 4..=6 {
+        idle_turn(&host, &agent, through_seq).await;
+        host.settle_missed_turns().await.unwrap();
+    }
+    {
+        let state = host.state.lock().await;
+        assert_eq!(state.phase, RunPhase::Running);
+        assert!(state.idle_retries.is_empty());
+        assert!(state.missed_turns.is_empty());
+    }
+    assert_eq!(warnings(&host), vec![warning.clone(), warning]);
+    assert_eq!(retry_wakes(&host), vec![retry.clone(), retry]);
+    assert_eq!(
+        missed_turn_reports(&host).await,
+        vec![
+            report(1),
+            report(2),
+            report(3),
+            report(1),
+            report(2),
+            report(3)
+        ]
+    );
+    assert!(host
+        .instance
+        .checkpoint()
+        .await
+        .progress
+        .unwrap()
+        .waiting_for
+        .is_empty());
     host.instance.leave().await.unwrap();
 }

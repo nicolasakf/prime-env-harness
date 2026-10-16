@@ -71,7 +71,7 @@ environment=E()
         gate: Mutex::new(()), link: SupervisorLink::new(root.join("unused.sock")),
         builder_token: "b".repeat(64), host_id: "host".into(), telemetry: None,
         defaults: json!({}), seats: Mutex::new(BTreeMap::new()),
-        python_cancellations: Mutex::new(BTreeMap::new()), changed: Notify::new(), announced_phase: std::sync::Mutex::new(None),
+        python_cancellations: Mutex::new(BTreeMap::new()), changed: Notify::new(), live: Mutex::new(None), announced_phase: std::sync::Mutex::new(None),
         shutdown: CancellationToken::new(), view, instance,
     })
 }

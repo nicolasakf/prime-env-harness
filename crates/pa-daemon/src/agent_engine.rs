@@ -267,7 +267,7 @@ pub struct AgentSessionEngine {
     pub(crate) registered_jobs_probe:
         std::sync::Mutex<Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>>,
     /// The worker-owned session file (conversation-log path), set at create.
-    session_file: std::sync::Mutex<Option<std::path::PathBuf>>,
+    session_file: std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
     /// The authoritative model selection. Starts from the process fallback
     /// (create config or worker env) and is re-bound when a session's create
     /// command carries explicit wire flags.

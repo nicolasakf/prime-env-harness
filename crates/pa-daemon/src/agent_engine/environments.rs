@@ -8,8 +8,9 @@ use pa_environments::{ActiveInstance, EnvironmentManager};
 use pa_types::environments::{EnvironmentSessionProfile, ExecutionPolicy, InstanceRun};
 use serde_json::{json, Value};
 
-use super::environment_builder::{control_run, management};
+use super::environment_builder::{control_run, intervene, management};
 use super::AgentSessionEngine;
+use crate::environment_host::Requester;
 
 impl AgentSessionEngine {
     pub(crate) async fn environment_command(
@@ -40,7 +41,10 @@ impl AgentSessionEngine {
         match operation {
             "catalog" => Ok(json!({"definitions":manager.store().list()?})),
             "instances" => Ok(json!({"instances":manager.store().list_instances()?})),
+            // The live runs; `include_ended` also lists the ended (terminal)
+            // runs, whose transcripts stay readable through `transcript`.
             "controls" => {
+                let include_ended = params["include_ended"].as_bool().unwrap_or(false);
                 let mut runs = Vec::new();
                 for instance in manager.store().list_instances()? {
                     let directory = manager.store().instance_path(&instance.id)?;
@@ -50,7 +54,7 @@ impl AgentSessionEngine {
                     }
                     let state: crate::environment_host::RunState =
                         crate::environment_host::read(&path)?;
-                    if !state.phase.is_terminal() {
+                    if include_ended || !state.phase.is_terminal() {
                         runs.push(InstanceRun {
                             instance,
                             phase: state.phase,
@@ -59,10 +63,31 @@ impl AgentSessionEngine {
                                 &directory.join("builder-session.json"),
                             )
                             .ok(),
+                            builder_saved_session_id: crate::environment_host::read(
+                                &directory.join("builder-saved-session.json"),
+                            )
+                            .ok(),
                         });
                     }
                 }
                 Ok(json!({"runs":runs}))
+            }
+            // A run's transcript, read from its saved conversation without
+            // attaching a session to it, so viewing never changes the run.
+            "transcript" => {
+                let path = manager
+                    .store()
+                    .instance_path(required(params, "id")?)?
+                    .join("host-conversation.jsonl");
+                if !path.exists() {
+                    bail!("this run has no saved transcript");
+                }
+                let messages = tokio::task::spawn_blocking(move || {
+                    crate::session_store::SessionFile::open_windowed(&path)
+                        .map(|file| file.messages())
+                })
+                .await??;
+                Ok(json!({"messages":messages}))
             }
             "pause" | "stop" => {
                 control_run(
@@ -72,6 +97,17 @@ impl AgentSessionEngine {
                     required(params, "id")?,
                     operation,
                     "human",
+                )
+                .await
+            }
+            "act_for_seat" | "suspend_seat" | "resume_seat" => {
+                intervene(
+                    &manager,
+                    &self.link,
+                    required(params, "id")?,
+                    operation,
+                    params,
+                    Requester::Human,
                 )
                 .await
             }
@@ -96,6 +132,24 @@ impl AgentSessionEngine {
             "create" | "validate" | "save" => {
                 let name = format!("{operation}_environment");
                 management(&manager, &name, params).await
+            }
+            // From the builder a live view is always public: seat views belong to the
+            // human at that run's own table.
+            "view" => {
+                let id = required(params, "id")?;
+                let path = manager.store().instance_path(id)?;
+                let host: Value = crate::environment_host::read(&path.join("host-session.json"))
+                    .context(
+                    "this run has no live host; replay an ended run with the viewer tool instead",
+                )?;
+                let response = self.link.request(json!({"type":"env","activeSessionId":host["activeSessionId"],"operation":"view","parameters":{"perspective":{"kind":"public"},"viewer":params["viewer"]}}), std::time::Duration::from_secs(180)).await?;
+                if !response.success {
+                    bail!(
+                        "live view unavailable: {}",
+                        response.error.unwrap_or_default()
+                    );
+                }
+                Ok(response.data.unwrap_or(Value::Null))
             }
             "watch" => {
                 let id = required(params, "id")?;
@@ -293,6 +347,23 @@ impl AgentSessionEngine {
                         .join("builder-session.json"),
                     &parent,
                 )?;
+                // The active id changes whenever the builder reopens; its saved
+                // session id does not, so the run stays with its builder.
+                let saved_session = self
+                    .session_file
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone()
+                    .and_then(|file| pa_core::session::manager::read_session_header(&file));
+                if let Some(header) = saved_session {
+                    crate::environment_host::write(
+                        &manager
+                            .store()
+                            .instance_path(&id)?
+                            .join("builder-saved-session.json"),
+                        &header.id,
+                    )?;
+                }
                 let response = owned_link.request_success(json!({"type":"create","sessionPath":path,"name":name,"config":config,"lifecycle":"client_owned"}), std::time::Duration::from_secs(180)).await?;
                 crate::environment_host::write(
                     &manager
@@ -632,7 +703,7 @@ impl AgentSessionEngine {
                 }),
             );
         }
-        super::environment_builder::register(&mut handlers, &self.config);
+        super::environment_builder::register(&mut handlers, &self.config, &self.session_file);
         handlers
     }
 }

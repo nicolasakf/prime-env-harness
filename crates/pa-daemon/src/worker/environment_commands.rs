@@ -44,6 +44,7 @@ impl Worker {
                     | "seat_transcript"
                     | "run_state"
                     | "privileged_observe"
+                    | "view"
             ) {
                 return Some(
                     match engine

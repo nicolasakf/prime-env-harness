@@ -34,7 +34,7 @@ impl AgentSessionEngine {
     /// it).
     pub fn new(config: AgentEngineConfig) -> anyhow::Result<Self> {
         let runtime = crate::async_safe_runtime::AsyncSafeRuntime::new_multi_thread()?;
-        let session_file = std::sync::Mutex::new(config.session_file.clone());
+        let session_file = std::sync::Arc::new(std::sync::Mutex::new(config.session_file.clone()));
         // Process-level fallback: the create config, else the worker env
         // pair. A create command with explicit wire flags overrides both.
         let thinking = config.thinking;

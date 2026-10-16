@@ -19,6 +19,20 @@ pub fn session_file_name(session_id: &str) -> String {
     format!("{session_id}.jsonl")
 }
 
+/// One persisted entry row. A row that repeats a key still loads with its
+/// last value, as `JSON.parse` keeps it: environment rows written before the
+/// fix repeat `timestamp`, the entry's RFC 3339 string followed by the
+/// message's Unix milliseconds, which load back as that RFC 3339 time.
+fn parse_entry(line: &str) -> Option<SessionEntry> {
+    serde_json::from_str(line).ok().or_else(|| {
+        let mut value: Value = serde_json::from_str(line).ok()?;
+        if let Some(ms) = value.get("timestamp").and_then(Value::as_u64) {
+            value["timestamp"] = Value::String(crate::util::iso_from_unix_ms(ms));
+        }
+        serde_json::from_value(value).ok()
+    })
+}
+
 #[must_use]
 pub fn parse_session_entries(content: &str) -> Vec<Value> {
     content
@@ -178,7 +192,7 @@ impl SessionFile {
                 continue;
             }
             // Malformed lines are skipped, matching the TS loader.
-            if let Ok(entry) = serde_json::from_str::<SessionEntry>(trimmed) {
+            if let Some(entry) = parse_entry(trimmed) {
                 file.push_index(entry);
             }
         }
@@ -234,7 +248,7 @@ impl SessionFile {
             .into_iter()
             .chain(window.take_raw_entries())
         {
-            let Ok(entry) = serde_json::from_str(&line) else {
+            let Some(entry) = parse_entry(&line) else {
                 return Self::open(path);
             };
             file.push_index(entry);

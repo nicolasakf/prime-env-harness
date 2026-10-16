@@ -79,7 +79,9 @@ impl Worker {
                         })
                     };
                     if !duplicate {
-                        store.persist_entry("custom_message", json!({"customType":row["customType"],"content":row["content"],"display":true,"timestamp":crate::util::now_ms(),"details":row["details"]}))?;
+                        // The entry carries its own timestamp; a second one in
+                        // the fields would repeat the key on disk.
+                        store.persist_entry("custom_message", json!({"customType":row["customType"],"content":row["content"],"display":true,"details":row["details"]}))?;
                     }
                     duplicate
                 };

@@ -89,6 +89,10 @@ impl TurnRunner {
         port.settled(through_seq).await
     }
     pub(super) async fn run(self) {
+        // Set when work a person sent ran since the last park, so the idle
+        // notification fires once per settle of that work rather than on
+        // every spurious wake or unattended (heartbeat, wake) turn.
+        let mut person_turn_ran = false;
         loop {
             let engine = self.engine.clone();
             let item: Option<Vec<QueuedItem>> = {
@@ -206,9 +210,13 @@ impl TurnRunner {
                 // The busy flip reaches the supervisor's roster before the
                 // turn runs (TS pushes the same transition).
                 self.push_roster_delta();
+                person_turn_ran |= crate::idle_notification::batch_awaits_person(&items);
                 self.run_turn(engine, items).await;
             } else {
                 self.idle_notify.notify_waiters();
+                if std::mem::take(&mut person_turn_ran) {
+                    self.notify_if_top_level_idle();
+                }
                 // The idle clock (TS `lastActivityAt`): every park after
                 // work re-stamps the activity end, so the idle-eviction
                 // window below measures from the TRUE last activity.
@@ -243,6 +251,56 @@ impl TurnRunner {
                     }
                 }
             }
+        }
+    }
+
+    /// `notifyOnIdle`: posts the desktop notification when this depth-0
+    /// session parks with no lane work left. Environment participants are
+    /// scripted episodes, so they never notify. With a client attached the
+    /// notice rides an `idle_notification` session event and the client
+    /// posts it through its terminal; otherwise the daemon posts it.
+    fn notify_if_top_level_idle(&self) {
+        let participant = self.agent_engine.as_ref().is_some_and(|engine| {
+            engine
+                .participant_binding()
+                .map_or(true, |binding| binding.is_some())
+        });
+        if participant {
+            return;
+        }
+        let (cwd, chat_name, attached) = {
+            let core = self.core.lock().unwrap();
+            if core.rlm_depth != 0 {
+                return;
+            }
+            let chat_name = core
+                .store
+                .as_ref()
+                .and_then(|store| store.session_name().map(str::to_string));
+            (
+                core.cwd.clone(),
+                chat_name,
+                !core.attached_client_ids.is_empty(),
+            )
+        };
+        let settings =
+            pa_core::settings::SettingsManager::create(&cwd, &self.passivation.agent_dir);
+        if !settings.get_notify_on_idle() {
+            return;
+        }
+        let title = crate::idle_notification::idle_notification_title(chat_name.as_deref(), &cwd);
+        if attached {
+            super::summary::emit_worker_event_with(
+                &self.core,
+                &self.events,
+                json!({
+                    "type": "idle_notification",
+                    "title": title,
+                    "body": crate::idle_notification::IDLE_NOTIFICATION_BODY,
+                }),
+            );
+        } else {
+            crate::idle_notification::post_idle_notification(&title);
         }
     }
 

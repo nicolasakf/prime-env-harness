@@ -1,7 +1,7 @@
 //! Drain durable deliveries; admission acknowledgments precede host cursor updates.
 use super::{
-    read, write, AgentContext, Arc, Context, EnvironmentHost, OccupantKind, Result, RunPhase,
-    WakePayload,
+    read, write, AgentContext, Arc, Context, EnvironmentHost, MissedTurnCause, OccupantKind,
+    Result, RunPhase, SeatId, WakePayload,
 };
 use pa_environments::DeliveryCursor;
 use serde_json::json;
@@ -74,9 +74,12 @@ impl EnvironmentHost {
             .filter(|seat| seat.occupant == OccupantKind::Agent)
             .count() as u64;
         // The deadline bounds time to action: how long a seat the environment is
-        // waiting on may take since its turn started or it last acted. A seat that
-        // acted and is no longer awaited has nothing left to do; its remaining turn
-        // is bounded by the output cap, and aborting it would only replay a stale wake.
+        // waiting on may take since its turn started or it last acted. It also bounds
+        // the follow-up of a seat that acted and is no longer awaited: such a seat has
+        // nothing left to do, and a model can keep calling tools for many requests,
+        // each one only capped in output. Cutting that follow-up is cleanup that spends
+        // no retry budget, and its retained wake, a task the seat no longer has, is
+        // retired when it replays.
         let timed_out = {
             let state = self.state.lock().await;
             let awaited = checkpoint
@@ -87,7 +90,8 @@ impl EnvironmentHost {
                 .busy
                 .iter()
                 .filter(|(seat, started)| {
-                    awaited.is_none_or(|awaited| awaited.contains(seat))
+                    (awaited.is_none_or(|awaited| awaited.contains(seat))
+                        || state.turn_acted.contains(*seat))
                         && crate::util::now_ms().saturating_sub(**started) / 1000
                             >= roster.limits.seat_turn_timeout_seconds
                 })
@@ -109,6 +113,39 @@ impl EnvironmentHost {
                 }
             }
         }
+        // A suspended seat the environment awaits is reported once per progress
+        // revision, so the environment may play for it; without `missed_turn` the
+        // run goes quiescent and the builder is told which seat it waits on.
+        if self.instance.definition.manifest.missed_turns {
+            if let Some(progress) = checkpoint.progress.as_ref() {
+                let mut state = self.state.lock().await;
+                let state = &mut *state;
+                if state.phase == RunPhase::Running && checkpoint.finished.is_none() {
+                    let mut queued = false;
+                    for (seat, suspended) in &mut state.suspended {
+                        if progress.waiting_for.contains(seat)
+                            && suspended.reported_revision != Some(progress.revision)
+                        {
+                            suspended.reported_revision = Some(progress.revision);
+                            state
+                                .missed_turns
+                                .insert(seat.clone(), MissedTurnCause::Suspended);
+                            queued = true;
+                        }
+                    }
+                    if queued {
+                        self.save_state(state)?;
+                    }
+                }
+            }
+        }
+        // The environment's answer to a missed turn may commit notices or progress
+        // that the rest of this pass must see.
+        let checkpoint = if self.settle_missed_turns().await? {
+            self.instance.checkpoint().await
+        } else {
+            checkpoint
+        };
         let mut state = self.state.lock().await;
         state.operations = checkpoint.receipts.len().saturating_sub(1) as u64;
         let old_phase = state.phase.clone();
@@ -147,6 +184,7 @@ impl EnvironmentHost {
                 state.phase = if reason == "no environment progress" {
                     RunPhase::Stalled
                 } else {
+                    state.paused_automatically = true;
                     RunPhase::Paused
                 };
                 state.reason = Some(reason.into());
@@ -200,6 +238,10 @@ impl EnvironmentHost {
             .iter()
             .filter(|seat| seat.occupant == OccupantKind::Agent)
         {
+            // A suspended seat's deliveries wait, unacknowledged, until it resumes.
+            if self.state.lock().await.suspended.contains_key(&seat.id) {
+                continue;
+            }
             let mut cursor = DeliveryCursor::load(self.instance.path(), &seat.id)?;
             let deliveries = self.table.since(Some(&seat.id), cursor.through_seq)?;
             if !deliveries.iter().any(|delivery| delivery.wake) {
@@ -284,11 +326,10 @@ impl EnvironmentHost {
             );
         }
         let mut pending = false;
-        for seat in roster
-            .seats
-            .iter()
-            .filter(|seat| seat.occupant == OccupantKind::Agent)
-        {
+        let suspended = self.state.lock().await.suspended.clone();
+        for seat in roster.seats.iter().filter(|seat| {
+            seat.occupant == OccupantKind::Agent && !suspended.contains_key(&seat.id)
+        }) {
             let path = self
                 .instance
                 .path()
@@ -333,23 +374,44 @@ impl EnvironmentHost {
                 .is_none_or(|progress| progress.waiting_for.contains(&seat))
         });
         let mut state = self.state.lock().await;
-        let mut quiescent =
-            state.phase == RunPhase::Running && state.busy.is_empty() && !pending && !human_waiting;
-        // A settling turn appends its re-prompt under the state lock, so a wake
-        // that landed after the dispatch pass above still counts as pending.
-        for seat in roster
-            .seats
-            .iter()
-            .filter(|seat| seat.occupant == OccupantKind::Agent)
-        {
+        let mut quiescent = state.phase == RunPhase::Running
+            && state.busy.is_empty()
+            && state.missed_turns.is_empty()
+            && !pending
+            && !human_waiting;
+        // A settling turn appends its re-prompt or queues its missed turn under the
+        // state lock, so either landing after the dispatch pass above counts as pending.
+        // Held-back wakes of suspended seats are not pending: nothing will run them.
+        for seat in roster.seats.iter().filter(|seat| {
+            seat.occupant == OccupantKind::Agent && !state.suspended.contains_key(&seat.id)
+        }) {
             if !quiescent {
                 break;
             }
             quiescent = !self.has_unseen_wake(&seat.id)?;
         }
         if quiescent {
+            let waiting_on_suspended: Vec<_> = checkpoint
+                .progress
+                .as_ref()
+                .map(|progress| {
+                    progress
+                        .waiting_for
+                        .iter()
+                        .filter(|seat| state.suspended.contains_key(*seat))
+                        .map(SeatId::as_str)
+                        .collect()
+                })
+                .unwrap_or_default();
             state.phase = RunPhase::Stalled;
-            state.reason = Some("quiescent: no pending wake or human turn".into());
+            state.reason = Some(if waiting_on_suspended.is_empty() {
+                "quiescent: no pending wake or human turn".into()
+            } else {
+                format!(
+                    "waiting on suspended seat {}: act for it or resume it",
+                    waiting_on_suspended.join(", ")
+                )
+            });
             crate::environment_telemetry::track(
                 self.telemetry.as_ref(),
                 "environment_run_limit",
@@ -362,23 +424,32 @@ impl EnvironmentHost {
         Ok(())
     }
     async fn notify_builder(&self) -> Result<()> {
-        let phase = {
+        let (phase, reason) = {
             let state = self.state.lock().await;
-            if !matches!(
-                state.phase,
-                RunPhase::Finished | RunPhase::Stalled | RunPhase::NeedsRecovery
-            ) || state.builder_notified.as_ref() == Some(&state.phase)
-            {
+            let news = match state.phase {
+                RunPhase::Finished | RunPhase::Stalled | RunPhase::NeedsRecovery => true,
+                RunPhase::Paused => state.paused_automatically,
+                RunPhase::Running | RunPhase::Stopped => false,
+            };
+            if !news || state.builder_notified.as_ref() == Some(&state.phase) {
                 return Ok(());
             }
-            state.phase.clone()
+            (
+                state.phase.clone(),
+                state.reason.clone().unwrap_or_default(),
+            )
+        };
+        let next = match phase {
+            RunPhase::Stalled => " For a seat that is stuck, environments.act_for_seat takes its turn, and suspend_seat takes it out of play; then resume the run with environments.resume_instance.",
+            RunPhase::Paused => " The run paused itself and stays paused until it is resumed with environments.resume_instance.",
+            RunPhase::Running | RunPhase::NeedsRecovery | RunPhase::Stopped | RunPhase::Finished => "",
         };
         let parent = self.instance.path().join("builder-session.json");
         if !parent.exists() {
             return Ok(());
         }
         let parent: String = read(&parent)?;
-        let response = self.link.request(serde_json::json!({"type":"send_message","targetActiveSessionId":parent,"fromActiveSessionId":self.host_id,"message":format!("Environment {} is {:?}. Use environments.instance_status and privileged read APIs to inspect it.", self.instance.instance.id, phase)}), Duration::from_secs(30)).await?;
+        let response = self.link.request(serde_json::json!({"type":"send_message","targetActiveSessionId":parent,"fromActiveSessionId":self.host_id,"message":format!("Environment {} is {:?}: {reason}. Use environments.instance_status and privileged read APIs to inspect it.{next}", self.instance.instance.id, phase)}), Duration::from_secs(30)).await?;
         if !response.success {
             eprintln!(
                 "environment builder notification failed: {:?}",

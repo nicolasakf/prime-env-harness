@@ -283,6 +283,16 @@ while True:
         assert_eq!(controls["runs"][0]["instance"]["id"], json!(instance));
         assert_eq!(controls["runs"][0]["phase"], "paused");
         assert_eq!(controls["runs"][0]["builder_session_id"], json!(builder));
+        // The run also records the builder's saved session id, which stays
+        // the same when the builder reopens under a new active id.
+        let saved_session = client.request(&json!({"type":"get_state","activeSessionId":builder}))
+            ["data"]["sessionId"]
+            .clone();
+        assert!(saved_session.is_string(), "{saved_session}");
+        assert_eq!(
+            controls["runs"][0]["builder_saved_session_id"],
+            saved_session
+        );
         let announced = client
             .events
             .iter()
@@ -298,6 +308,14 @@ while True:
         assert_eq!(
             client.environment(&builder, "controls", &json!({}))["runs"],
             json!([])
+        );
+        let ended = client.environment(&builder, "controls", &json!({"include_ended":true}));
+        assert_eq!(ended["runs"][0]["instance"]["id"], json!(instance));
+        assert_eq!(ended["runs"][0]["phase"], "stopped");
+        let transcript = client.environment(&builder, "transcript", &json!({"id":instance}));
+        assert!(
+            transcript["messages"].is_array(),
+            "the ended run's transcript stays readable: {transcript}"
         );
         assert_eq!(client.request(&json!({"type":"shutdown"}))["success"], true);
         supervisor.0.wait().unwrap();
@@ -428,6 +446,22 @@ while True:
     }
     let history = client.request(&json!({"type":"get_messages","activeSessionId":host}));
     assert_eq!(history["success"], true);
+    if matches!(scenario, Scenario::Agents) {
+        // The saved table rows parse as written, and the builder reads back
+        // from disk the conversation the live table served (the table may
+        // have appended a row since).
+        let saved = std::fs::read_to_string(instance_path.join("host-conversation.jsonl")).unwrap();
+        for row in saved.lines().skip(1) {
+            assert!(
+                serde_json::from_str::<pa_daemon::session_store::SessionEntry>(row).is_ok(),
+                "unreadable transcript row: {row}"
+            );
+        }
+        let live = history["data"]["messages"].as_array().unwrap().clone();
+        let transcript = client.environment(&builder, "transcript", &json!({"id":instance}));
+        let read = transcript["messages"].as_array().unwrap();
+        assert_eq!(read[..live.len().min(read.len())], live[..]);
+    }
     let public = format!("{history} {:?}", client.events);
     assert!(!public.contains("PRIVATE-THINKING"));
     assert!(!public.contains("PRIVATE-ASSISTANT-SECRET"));

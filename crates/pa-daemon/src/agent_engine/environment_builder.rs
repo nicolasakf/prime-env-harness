@@ -1,19 +1,31 @@
-//! Builder provisioning, privileged reads, and run pause/resume/stop; builders never act or play.
+//! Builder provisioning, privileged reads, run pause/resume/stop, and seat
+//! interventions. Builders never play: they act for an agent seat only through an
+//! explicit, recorded intervention on a turn the environment awaits from it.
 use super::{environments::required, AgentEngineConfig};
 use crate::{
-    environment_host::{read, RunState},
+    environment_host::{read, Requester, RunState},
     supervisor_link::SupervisorLink,
 };
 use anyhow::{bail, Context, Result};
 use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
+use pa_core::session::manager::read_session_header;
 use pa_environments::EnvironmentManager;
 use pa_types::environments::{
     EnvironmentLanguage, ExecutionPolicy, InstanceRoster, OccupantKind, RunPhase, SeatId,
 };
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
-pub(super) fn register(handlers: &mut HostRequestHandlers, config: &AgentEngineConfig) {
+pub(super) fn register(
+    handlers: &mut HostRequestHandlers,
+    config: &AgentEngineConfig,
+    session_file: &Arc<Mutex<Option<PathBuf>>>,
+) {
     for operation in [
         "start_instance",
         "list_instances",
@@ -24,10 +36,16 @@ pub(super) fn register(handlers: &mut HostRequestHandlers, config: &AgentEngineC
         "observe_seat",
         "seat_transcript",
         "table_log",
+        "view_instance",
+        "act_for_seat",
+        "suspend_seat",
+        "resume_seat",
     ] {
         let config = config.clone();
+        let session_file = Arc::clone(session_file);
         handlers.register(format!("environments.{operation}"), host_handler(move |payload| {
             let config = config.clone();
+            let session_file = Arc::clone(&session_file);
             async move {
                 let result = async {
                 let manager = EnvironmentManager::new(config.agent_dir.join("environments"), None)?;
@@ -44,8 +62,13 @@ pub(super) fn register(handlers: &mut HostRequestHandlers, config: &AgentEngineC
                 }
                 let id = required(&params, "instance")?;
                 let path = manager.store().instance_path(id)?;
-                let builder: String = read(&path.join("builder-session.json"))?;
-                if builder != link_config.active_session_id { bail!("instance belongs to another builder"); }
+                // The active id changes whenever the builder reopens; the saved session id does not.
+                let active_owner = read::<String>(&path.join("builder-session.json")).is_ok_and(|builder| builder == link_config.active_session_id);
+                let saved_owner = read::<String>(&path.join("builder-saved-session.json")).is_ok_and(|saved| {
+                    let file = session_file.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+                    file.and_then(|file| read_session_header(&file)).is_some_and(|header| header.id == saved)
+                });
+                if !active_owner && !saved_owner { bail!("instance belongs to another builder"); }
                 let control = match operation {
                     "pause_instance" => Some("pause"),
                     "resume_instance" => Some("resume_run"),
@@ -55,6 +78,9 @@ pub(super) fn register(handlers: &mut HostRequestHandlers, config: &AgentEngineC
                 if let Some(control) = control {
                     return control_run(&manager, &link, &config, id, control, "builder").await;
                 }
+                if matches!(operation, "act_for_seat" | "suspend_seat" | "resume_seat") {
+                    return intervene(&manager, &link, id, operation, &params, Requester::Builder).await;
+                }
                 let token: String = read(&path.join("builder-token.json"))?;
                 let host: Value = read(&path.join("host-session.json"))?;
                 let host_operation = match operation {
@@ -62,9 +88,12 @@ pub(super) fn register(handlers: &mut HostRequestHandlers, config: &AgentEngineC
                     "observe_seat" => "privileged_observe",
                     "seat_transcript" => "seat_transcript",
                     "table_log" => "table_log",
+                    "view_instance" => "view",
                     _ => bail!("unknown builder read"),
                 };
                 let mut parameters = params.clone(); parameters["builder_token"] = json!(token);
+                // The builder may watch a live run only from the public perspective.
+                if operation == "view_instance" { parameters["perspective"] = json!({"kind":"public"}); }
                 let response = link.request(json!({"type":"env","activeSessionId":host["activeSessionId"],"operation":host_operation,"parameters":parameters}), Duration::from_secs(180)).await?;
                 if response.success { return Ok(response.data.unwrap_or(Value::Null)); }
                 if !response.error.as_deref().is_some_and(host_gone) { bail!("privileged read failed: {}", response.error.unwrap_or_default()); }
@@ -79,6 +108,7 @@ pub(super) fn register(handlers: &mut HostRequestHandlers, config: &AgentEngineC
                         Ok(json!({"transcript":std::fs::read_to_string(transcript)?.lines().skip(params["since"].as_u64().unwrap_or_default() as usize).collect::<Vec<_>>().join("\n")}))
                     }
                     "observe_seat" => manager.inspect(id, &serde_json::from_value(params["seat"].clone())?).await,
+                    "view_instance" => bail!("the run is not live; replay an ended run with the viewer tool's export"),
                     "table_log" => {
                         // Ownership prevents offline readers from racing an append or
                         // accidentally truncating a live writer's partial table line.
@@ -89,7 +119,7 @@ pub(super) fn register(handlers: &mut HostRequestHandlers, config: &AgentEngineC
                     _ => bail!("unknown offline read"),
                 }
                 }.await;
-                let feature = match operation { "start_instance" => "environment_builder_provision", "list_instances" | "instance_status" | "observe_seat" | "seat_transcript" | "table_log" => "environment_privileged_read", "pause_instance" | "resume_instance" | "stop_instance" => return result, _ => unreachable!("registered operations") };
+                let feature = match operation { "start_instance" => "environment_builder_provision", "list_instances" | "instance_status" | "observe_seat" | "seat_transcript" | "table_log" => "environment_privileged_read", "pause_instance" | "resume_instance" | "stop_instance" | "view_instance" | "act_for_seat" | "suspend_seat" | "resume_seat" => return result, _ => unreachable!("registered operations") };
                 crate::environment_telemetry::track(crate::environment_telemetry::client(&config).as_ref(), feature, if result.is_ok() { "completed" } else { "failed" }, None);
                 result
             }
@@ -166,6 +196,39 @@ pub(crate) async fn control_run(
         Some(&choice),
     );
     Ok(json!({"instance_id":id,"run":state}))
+}
+
+/// Sends a seat intervention to the run's live host, which applies it and
+/// records its telemetry. `requester` is the builder API or the human at the
+/// builder prompt; both authenticate with the run's builder token.
+pub(crate) async fn intervene(
+    manager: &EnvironmentManager,
+    link: &SupervisorLink,
+    id: &str,
+    operation: &str,
+    params: &Value,
+    requester: Requester,
+) -> Result<Value> {
+    let path = manager.store().instance_path(id)?;
+    let host: Value = read(&path.join("host-session.json"))?;
+    let token: String = read(&path.join("builder-token.json"))?;
+    let parameters = json!({
+        "seat": params["seat"],
+        "action": params["action"],
+        "arguments": params.get("arguments").cloned().unwrap_or_else(|| json!({})),
+        "reason": params["reason"],
+        "requester": match requester { Requester::Builder => "builder", Requester::Human => "human" },
+        "builder_token": token,
+    });
+    let response = link.request(json!({"type":"env","activeSessionId":host["activeSessionId"],"operation":format!("builder_{operation}"),"parameters":parameters}), Duration::from_secs(180)).await?;
+    if response.success {
+        return Ok(response.data.unwrap_or(Value::Null));
+    }
+    let error = response.error.unwrap_or_default();
+    if host_gone(&error) {
+        bail!("the table host is closed; re-enter the instance with /env resume before intervening in its run");
+    }
+    bail!("{operation} failed: {error}")
 }
 
 pub(super) fn roster(value: &Value) -> Result<InstanceRoster> {
@@ -256,6 +319,8 @@ pub(crate) async fn management(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pa_core::kernel::shared::HostRequestPayload;
+
     #[test]
     fn provisioning_cannot_expand_a_selected_policy() {
         let selected = ExecutionPolicy {
@@ -287,5 +352,71 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["player-1", "player-2"]
         );
+    }
+
+    #[tokio::test]
+    async fn reopened_builder_controls_only_runs_saved_under_its_session() {
+        use crate::agent_engine::config::SupervisorLinkConfig;
+        let root = tempfile::tempdir().unwrap();
+        let conversation = root.path().join("chat.jsonl");
+        std::fs::write(
+            &conversation,
+            "{\"type\":\"session\",\"version\":3,\"id\":\"saved-chat\",\"timestamp\":\"2026-10-05T14:34:26.328Z\",\"cwd\":\"/\"}\n",
+        )
+        .unwrap();
+        let instances = root.path().join("agent/environments/instances");
+        for (instance, active, saved) in [
+            ("reopened", "previous-active", "saved-chat"),
+            ("foreign", "other-active", "other-chat"),
+        ] {
+            let dir = instances.join(instance);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("builder-session.json"), json!(active).to_string()).unwrap();
+            std::fs::write(
+                dir.join("builder-saved-session.json"),
+                json!(saved).to_string(),
+            )
+            .unwrap();
+        }
+        let config = AgentEngineConfig {
+            cwd: root.path().into(),
+            agent_dir: root.path().join("agent"),
+            provider: None,
+            model: None,
+            api_key: None,
+            thinking: None,
+            session_dir: None,
+            session_file: None,
+            faux_script: None,
+            supervisor_link: Some(SupervisorLinkConfig {
+                socket_path: root.path().join("daemon.sock"),
+                active_session_id: "current-active".into(),
+                worker_token: "token".into(),
+            }),
+            telemetry_disabled: Some(true),
+            cron_store: None,
+            queued_steering_probe: None,
+        };
+        let mut handlers = HostRequestHandlers::default();
+        register(
+            &mut handlers,
+            &config,
+            &Arc::new(Mutex::new(Some(conversation))),
+        );
+        let stop = |instance: &'static str| {
+            let handler = handlers.get("environments.stop_instance").unwrap();
+            async move {
+                handler(HostRequestPayload {
+                    data: json!({"instance": instance}),
+                    cell_source_code: None,
+                })
+                .await
+                .unwrap_err()
+                .to_string()
+            }
+        };
+        assert_eq!(stop("foreign").await, "instance belongs to another builder");
+        // Ownership passes; the run then fails only because it has no host record.
+        assert!(stop("reopened").await.contains("host-session.json"));
     }
 }

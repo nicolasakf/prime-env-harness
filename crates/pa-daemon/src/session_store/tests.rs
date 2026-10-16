@@ -95,6 +95,41 @@ fn bounded_header_treats_an_empty_file_as_headerless() {
     assert!(!is_valid_session_file(&path));
 }
 
+/// A row that repeats `timestamp` (the entry's RFC 3339 string, then the
+/// message's Unix milliseconds) loads with the last value, as `JSON.parse`
+/// reads it, instead of being dropped as malformed.
+#[test]
+fn a_row_with_a_repeated_timestamp_still_loads() {
+    let dir = temp_dir();
+    let path = dir.join("session.jsonl");
+    fs::write(
+        &path,
+        concat!(
+            r#"{"type":"session","version":3,"id":"s","timestamp":"2026-10-08T19:43:19.386Z","cwd":"/"}"#,
+            "\n",
+            r#"{"type":"custom_message","id":"c1","parentId":null,"timestamp":"2026-10-08T19:43:20.861Z","customType":"notice","content":"hello","display":true,"timestamp":1791488600861}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    for store in [
+        SessionFile::open(&path).unwrap(),
+        SessionFile::open_windowed(&path).unwrap(),
+    ] {
+        assert_eq!(
+            store.messages(),
+            vec![json!({
+                "role": "custom",
+                "customType": "notice",
+                "content": "hello",
+                "display": true,
+                "timestamp": "2026-10-08T19:43:20.861Z",
+            })]
+        );
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn open_folds_captured_child_usage_attributions() {
     let store = SessionFile::open(&captured_attribution_fixture()).unwrap();

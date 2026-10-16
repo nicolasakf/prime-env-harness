@@ -2,15 +2,18 @@
 mod calls;
 mod dispatch;
 mod files;
+mod interventions;
+mod live_view;
 mod retries;
 mod seats;
 use crate::supervisor_link::SupervisorLink;
 use anyhow::{Context, Result};
 pub(crate) use files::{authenticate, inbox_lock, read, write};
+pub(crate) use interventions::Requester;
 use pa_environments::{ActiveInstance, TableLog};
 use pa_types::environments::{
-    AgentContext, Delivery, DeliveryKind, NoticeTarget, OccupantKind, RoleName, Seat, SeatCall,
-    SeatId, SeatReply, WakePayload,
+    AgentContext, Delivery, DeliveryKind, MissedTurnCause, NoticeTarget, OccupantKind, RoleName,
+    Seat, SeatCall, SeatId, SeatReply, WakePayload,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,12 +43,19 @@ pub(crate) struct RunState {
     pub wake_sequences: BTreeMap<SeatId, u64>,
     #[serde(default)]
     pub builder_notified: Option<RunPhase>,
+    /// Set when a run bound paused the run, as opposed to a requester's pause or stop;
+    /// only an automatic pause is news to the builder.
+    #[serde(default)]
+    pub paused_automatically: bool,
     /// Progress revision observed when each seat's current turn started.
     #[serde(default)]
     pub turn_revisions: BTreeMap<SeatId, u64>,
     /// Consecutive re-prompts spent per seat since it last advanced the run.
     #[serde(default)]
     pub idle_retries: BTreeMap<SeatId, u64>,
+    /// Missed turns queued for the environment's `missed_turn`, with their cause.
+    #[serde(default)]
+    pub missed_turns: BTreeMap<SeatId, MissedTurnCause>,
     /// Seats whose timed-out turn is being aborted for a replay, with the abort time.
     #[serde(default)]
     pub timeout_aborts: BTreeMap<SeatId, u64>,
@@ -61,6 +71,22 @@ pub(crate) struct RunState {
     /// Seats that already acted in their current turn.
     #[serde(default)]
     pub turn_acted: std::collections::BTreeSet<SeatId>,
+    /// Agent seats the builder took out of play: they get no wakes or turns, and
+    /// their own calls cannot change the run, until the builder resumes them.
+    #[serde(default)]
+    pub suspended: BTreeMap<SeatId, SuspendedSeat>,
+    /// Actions the builder committed on each seat's behalf.
+    #[serde(default)]
+    pub builder_actions: BTreeMap<SeatId, u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct SuspendedSeat {
+    pub reason: String,
+    /// The progress revision in which the environment last heard, through
+    /// `missed_turn`, that it awaits this suspended seat.
+    #[serde(default)]
+    pub reported_revision: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
@@ -85,6 +111,8 @@ pub(crate) struct EnvironmentHost {
     pub changed: Notify,
     pub shutdown: CancellationToken,
     pub view: ViewSink,
+    /// The live-view server, started by the first `view` request.
+    live: Mutex<Option<Arc<live_view::LiveViews>>>,
     /// The last phase announced as an `environment_runs_changed` event, so a
     /// save that keeps the phase does not wake every client's dock. Unset
     /// until the first save, which announces the run itself.
@@ -122,13 +150,17 @@ impl EnvironmentHost {
                 direct_messages: BTreeMap::new(),
                 wake_sequences: BTreeMap::new(),
                 builder_notified: None,
+                paused_automatically: false,
                 turn_revisions: BTreeMap::new(),
                 idle_retries: BTreeMap::new(),
+                missed_turns: BTreeMap::new(),
                 timeout_aborts: BTreeMap::new(),
                 deadline_retries: BTreeMap::new(),
                 post_action_aborts: BTreeMap::new(),
                 time_to_action: BTreeMap::new(),
                 turn_acted: std::collections::BTreeSet::new(),
+                suspended: BTreeMap::new(),
+                builder_actions: BTreeMap::new(),
             }
         };
         if instance.checkpoint().await.finished.is_some() {
@@ -158,6 +190,7 @@ impl EnvironmentHost {
             changed: Notify::new(),
             shutdown: CancellationToken::new(),
             view,
+            live: Mutex::new(None),
             announced_phase: std::sync::Mutex::new(None),
         });
         host.provision().await?;
@@ -227,5 +260,11 @@ impl EnvironmentHost {
 
 #[cfg(test)]
 mod attention_tests;
+#[cfg(test)]
+mod builder_notice_tests;
+#[cfg(test)]
+mod intervention_tests;
+#[cfg(test)]
+mod live_view_tests;
 #[cfg(test)]
 mod tests;
