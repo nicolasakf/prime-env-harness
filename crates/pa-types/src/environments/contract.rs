@@ -60,6 +60,36 @@ pub struct EnvironmentManifest {
     pub direct_messages: Option<bool>,
     #[serde(default, skip_serializing_if = "AgentContext::is_conversation")]
     pub agent_context: AgentContext,
+    /// Whether the environment defines `missed_turn`, called when an awaited agent
+    /// seat's turn ends without an action.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub missed_turns: bool,
+}
+
+/// Why an awaited agent seat's turn ended without an action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MissedTurnCause {
+    /// The turn settled without acting, for example after exhausting its output cap.
+    Idle,
+    /// The turn ran past the seat's deadline and was cut.
+    Deadline,
+    /// The builder suspended the seat; it takes no turns until it is resumed.
+    /// Reported once per progress revision in which the environment awaits it.
+    Suspended,
+}
+
+/// What `missed_turn` receives: one more consecutive turn in which the seat did
+/// not act while the environment waited on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MissedTurn {
+    pub cause: MissedTurnCause,
+    /// Consecutive misses since the seat last acted or the run advanced, this one included.
+    pub misses: u64,
+    /// Re-prompts the host grants before it stops the run; a miss beyond it stops
+    /// the run unless the environment resolves the seat's turn.
+    pub limit: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

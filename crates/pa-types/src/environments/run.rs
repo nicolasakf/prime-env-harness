@@ -39,14 +39,22 @@ impl RunPhase {
     }
 }
 
-/// A persisted instance whose run is not terminal, so it can still be stopped.
+/// A persisted instance and its run phase; only a non-terminal run can still
+/// be controlled.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InstanceRun {
     pub instance: Instance,
     pub phase: RunPhase,
     pub reason: Option<String>,
-    /// The active session that provisioned the run, which the activity dock
-    /// scopes on; absent for runs persisted without a builder identity.
+    /// The active session that provisioned the run; absent for runs
+    /// persisted without a builder identity. An active id lasts only while
+    /// that session stays open in one daemon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builder_session_id: Option<String>,
+    /// The saved session that provisioned the run (its session file's
+    /// header id), which stays the same across daemon restarts and reopens
+    /// and is what the activity dock scopes on; absent for runs saved before
+    /// it was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builder_saved_session_id: Option<String>,
 }
