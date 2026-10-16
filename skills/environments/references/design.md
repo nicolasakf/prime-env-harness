@@ -134,6 +134,10 @@ Harness behavior to explain when asking:
   with thinking off. A turn that ends without acting while still awaited is
   re-prompted. Both draw on `idle_turn_retries`. When it runs out, the run
   stalls (idle) or pauses (timeout) until someone resumes it.
+- If a missed turn has a natural meaning in the domain (a warning, then a
+  default or forfeiting move), let the environment decide it with
+  `missed_turn` instead of letting one unresponsive seat stall everyone. Ask
+  the user what a miss should cost.
 - Higher thinking levels slow every move. Ask which levels the user expects,
   and suggest a short probe run before a long one.
 
@@ -171,7 +175,9 @@ cut rejected moves. Provide a safe action where the game allows one.
   to formatted strings.
 - Keep the log complete but bounded: record decisions and state changes, not
   copies of the full state on every step. Store full snapshots only at episode
-  boundaries.
+  boundaries. The harness separately keeps every committed snapshot as a delta
+  against the one before, so prefer appending to lists and changing values in
+  place. Removing from the front of a large list rewrites all of it.
 - Separate visibility. Mark each record public or private to a seat, or keep
   a private log and a public one. Private fields (hidden hands, secret
   submissions) are read only after the run finishes, as with other private state,
@@ -182,6 +188,17 @@ cut rejected moves. Provide a safe action where the game allows one.
   to guess. Do not describe the log in seat `instructions`; seats do not need it.
 - Reports: ask whether the user wants a reusable report template for this environment. If so, say so in
   the design summary; the builder creates it after the first finished run (see `reports.md`).
+- Viewers: do not raise them. A viewer (a visual replay page, see `viewers.md`) is
+  built only when the user explicitly asks for one. Without that request, the
+  environment is the engine and its checks.
 - The builder can also read `table_log`, `seat_transcript`, and
   `instance_status`. The status includes per-seat `time_to_action`, `deadline_retries`,
   `post_action_aborts`, and `idle_retries`.
+
+## Changing a saved environment
+
+A saved environment changes through new versions, and each version needs a
+changelog entry saying what differs from the one before. Plan the change as an
+environment change: if the cause turns out to be harness behavior, record a
+recommendation instead of working around the harness or editing it. Both rules,
+the tool, and the entry format are in [maintenance](maintenance.md).

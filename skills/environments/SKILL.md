@@ -1,6 +1,6 @@
 ---
 name: environments
-description: Build, validate, and save reusable TypeScript or Python environments with roles, seats, private observations, explicit wakes, and schema-defined actions. Also covers report templates and per-run reports for saved environments.
+description: Build, validate, and save reusable TypeScript or Python environments with roles, seats, private observations, explicit wakes, and schema-defined actions. Also covers report templates and per-run reports for saved environments, and optional replay viewers when the user asks for one.
 ---
 
 Build the user's environment in a draft. Use the Python `environments` module
@@ -13,6 +13,12 @@ privacy, agent context, deadlines and token budgets, failure handling, and
 analysis. Ask in a few short rounds, give a recommendation and a default for
 each question, and accept "decide later". Then confirm a short design summary
 before implementing.
+
+Stay on the environment side of the line: you create and edit environments, and you
+never edit the harness (its code, the SDK and runner copies in a draft, skills, prompts).
+When a problem is a harness problem, or when you save a new version of an existing
+environment, read [maintenance](references/maintenance.md): it covers harness
+recommendations and the changelog you write for every new version.
 
 Read [the authoring contract](references/contract.md) when implementing the
 manifest, SDK methods, schemas, dependencies, and checks. Read
@@ -98,6 +104,8 @@ After applying the requested policy, validate automatically in the selected
 backend without asking for separate validation approval. Read failures and repair
 at most three times. Changes invalidate validation. Save only passed, unchanged content.
 Present the saved definition and wait for `/env enter`; saving never enters.
+When the save created a new version of a definition that already existed, add its
+changelog entry first (see [maintenance](references/maintenance.md)).
 For programmatic provisioning, ask before starting runs because they consume
 model tokens. Existing user authorization suffices; do not ask repeatedly.
 
@@ -116,17 +124,22 @@ await environments.stop_instance(instance=run["instance_id"])  # permanent
 await environments.observe_seat(instance=run["instance_id"], seat="alice")
 await environments.seat_transcript(instance=run["instance_id"], seat="alice", since=0)
 await environments.table_log(instance=run["instance_id"], since_seq=0)
+# Only for a seat that is stuck (see "Stuck seats" below):
+await environments.act_for_seat(instance=run["instance_id"], seat="bob", action="pass", reason="bob kept calling unavailable actions")
+await environments.suspend_seat(instance=run["instance_id"], seat="bob", reason="bob cannot follow the turn order")
+await environments.resume_seat(instance=run["instance_id"], seat="bob")
 ```
 
 Provisioning may narrow the user-selected validation policy; it cannot widen
-permissions or change backend. The builder never acts or plays in a running
-instance; it can only pause, resume, or stop it. Pause freely when a run
+permissions or change backend. The builder never plays in a running instance:
+it can pause, resume, or stop it, and act for or suspend a stuck agent seat (see
+"Stuck seats" below). Pause freely when a run
 misbehaves or burns tokens, but ask before resuming a run the user paused or
 before stopping, which is permanent
 and ends the seat sessions, unless they told you to. Its other debugging APIs are
 privileged and read-only. Finish,
-stall, and recovery-required transitions send the builder an informational
-message. Seats cannot spawn, use builder APIs, or access builder tools.
+stall, and recovery-required transitions, and a pause forced by a run limit, send
+the builder an informational message; a pause or stop someone requested does not. Seats cannot spawn, use builder APIs, or access builder tools.
 Default run limits are 500 operations, 100 wakes per seat, two hours of wall
 clock including pauses, 120 seconds to act while the environment waits on a seat
 (restarting after each action), 8192 output tokens per model request (thinking
@@ -134,10 +147,26 @@ included), two re-prompts per awaited seat (`idle_turn_retries`), and 2·agents+
 settled turns without environment progress. A turn that exceeds the time or
 token limit without acting is retried with thinking off. A turn that ends without
 acting while the seat is still awaited is re-prompted. Both use the same retry
-budget; once it is spent, the run stalls or pauses. These are run settings, not
+budget; once it is spent, the run stalls or pauses. An environment that declares
+`missed_turns` decides what each miss means through `missed_turn` (see
+[coordination](references/coordination.md#missed-turns)). These are run settings, not
 definition fields. Estimate a long run's operations and wakes, and propose limits
 before starting it. `instance_status` reports per-seat `time_to_action`,
 `deadline_retries`, `post_action_aborts`, and `idle_retries`.
+
+Stuck seats: when a stall message names a seat, or a seat keeps failing its turn,
+read its transcript and observation first. If the environment awaits that seat
+and the user wants the run to go on, `act_for_seat` takes that one turn with the
+least consequential legal action (a pass or abstention where one exists). The
+environment validates it, only that seat is told, and a stalled or paused run
+then needs `resume_instance`. If the seat will keep failing, `suspend_seat` takes
+it out of play: an environment with `missed_turns` hears of each turn it awaits
+from the seat (cause `suspended`) and may play it; otherwise the run stalls on
+that turn for you to act for the seat or `resume_seat` it. Interventions never
+change environment state directly. Ask before intervening unless the user asked
+you to keep the run going, and always report which seat you acted for or
+suspended and why. Fix a recurring cause in the environment (clearer legal
+actions, a `missed_turn` policy) rather than intervening on every run.
 
 When the user asks for a report on an environment or a run, read
 [reports](references/reports.md) first. It separates reusable report templates
@@ -145,6 +174,21 @@ When the user asks for a report on an environment or a run, read
 the executed report of a single instance, and gives the workflow: look for a
 template, copy it into the instance folder, run it there. Do not write a new report
 before checking for a template.
+
+A viewer is an optional, environment-specific web page that replays an ended run
+step by step, or follows a running one live through the environment's optional
+`frame(perspective)`. Build one only when the user explicitly asks for a viewer, a
+visual replay, a live view, or a way to watch a run; never offer one by default.
+When they ask, read [viewers](references/viewers.md) first.
+`await environments.view_instance(instance=...)` returns a public live-view URL
+for a running instance whose saved viewer lists its version.
+
+Using an existing viewer needs no request. When the user asks for a run and the
+definition has a compatible saved viewer, launch it by default: call `view_instance`
+right after `start_instance` and give the user the URL; if it is refused, continue
+without saying so. For an ended run the user wants to review, export the replay and
+give the path. See "Launching an existing viewer is the default" in the viewers
+reference.
 
 Participant Python uses env.observe(), env.invoke(action, arguments), and
 env.integration(name, arguments). Provider credentials stay on the host.

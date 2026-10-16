@@ -2,10 +2,11 @@
 """Install the bundled example environments into a Prime Env data directory.
 
 Each directory under examples/ holds one environment's source, its suggested
-policy.json, and optionally a report template under game-report/. This script
-copies the source into a fresh draft (drafts must live in the data directory)
-and the report template into report-templates/. It never validates, saves, or
-runs anything: the builder does that after you pick an execution policy.
+policy.json, and optionally a report template under game-report/ and a replay
+viewer under viewer/. This script copies the source into a fresh draft (drafts
+must live in the data directory), the report template into report-templates/,
+and the viewer into viewers/. It never validates, saves, or runs anything: the
+builder does that after you pick an execution policy.
 """
 
 import argparse
@@ -17,7 +18,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = REPO / "examples"
-SKIP = shutil.ignore_patterns("__pycache__", ".DS_Store", "game-report")
+SKIP = shutil.ignore_patterns("__pycache__", ".DS_Store", "game-report", "viewer")
 
 
 def main() -> int:
@@ -51,6 +52,14 @@ def main() -> int:
                 print(f"{name}: report template already installed, left unchanged")
             else:
                 shutil.copytree(template, target)
+        viewer = source / "viewer"
+        if viewer.is_dir():
+            meta = json.loads((viewer / "viewer.json").read_text())
+            target = root / "viewers" / meta["definition_id"] / meta["id"]
+            if target.exists():
+                print(f"{name}: viewer already installed, left unchanged")
+            else:
+                shutil.copytree(viewer, target, ignore=shutil.ignore_patterns(".DS_Store"))
         print(f"{name}: draft created at {draft}")
         print(f"  /env policy {draft} {json.dumps(json.loads((source / 'policy.json').read_text()), separators=(',', ':'))}")
         print(f"  /env validate {draft}")

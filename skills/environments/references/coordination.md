@@ -150,23 +150,57 @@ turn started, and no newer wake is pending, the host re-prompts that seat. A
 turn that hits the deadline or token cap without acting is retried with thinking
 off. Both use one per-seat budget (`idle_turn_retries`), which resets when the
 seat acts, when the revision advances, or when the run resumes. Once the budget is spent, an idle turn
-stalls the run and a timeout pauses it. Late duplicate wakes for a seat the
+stalls the run and a timeout pauses it, unless the environment handles
+[missed turns](#missed-turns). Late duplicate wakes for a seat the
 environment is not waiting on are never re-prompted, so keep `waiting_for`
 exact. A run also stalls when no seat is busy, no wake is
 pending, and no human wait explains quiescence. A missing initial wake stalls an
 agents-only run. Missing human wait metadata can misclassify a legitimate wait.
 Timers in the host enforce limits and drain deliveries; they do not call domain
-tick methods or produce scheduled environment turns. The environment cannot
-forfeit or act for a slow seat. If a game needs a safe default move, expose it
-as an ordinary action, such as pass, that the seat can choose.
+tick methods or produce scheduled environment turns.
+
+### Missed turns
+
+By default the environment never learns that a seat missed its turn. To decide
+what a miss means in the domain, declare `"missed_turns": true` in the manifest
+and define `missed_turn(seat, report)`. The host calls it, as a committed
+operation, each time an awaited agent seat's turn ends without an action:
+`report.cause` is `"idle"` (the turn settled, for example at the token cap),
+`"deadline"` (the turn was cut at the deadline), or `"suspended"` (the builder
+took the seat out of play), `report.misses` counts
+consecutive misses including this one, and `report.limit` is
+`idle_turn_retries`. The method may:
+
+- warn the seat with `notify([seat], ..., wake=True)`; that wake replaces the
+  generic re-prompt;
+- act for the seat, such as a default or forfeiting move, and update
+  `progress` so the environment no longer waits on it; the host then retries
+  nothing and refunds the budget;
+- do nothing, leaving the generic re-prompt and limits as described above.
+
+When `misses` exceeds `limit` and the seat is still awaited with an unchanged
+revision, the run stalls (idle) or pauses (deadline) as usual, so a policy
+must act at or before `misses == limit + 1`. Changing the revision counts as the
+run advancing and resets `misses`, so a warning should not bump it. If no
+handler is declared, expose any safe default move as an ordinary action, such
+as pass, that the seat can choose.
+
+A `"suspended"` report arrives once per progress revision in which the
+environment awaits a seat the builder suspended. The seat will not act, is never
+re-prompted, and spends no budget (`misses` is 1). To keep the run moving, act for
+it with the same default move a timed-out seat would get. Otherwise the run stalls
+on that turn until the builder acts for the seat or resumes it. Do not send the
+suspended seat a wake; it is held until the seat resumes.
 
 Pause/resume/stop belong to the attached user. The builder that provisioned a run
 may also pause, resume, or stop it (`pause_instance`/`resume_instance`/
 `stop_instance`), and the table shows the status change. A builder resume of a
 run whose host has closed is refused; re-enter the instance first. Builder provisioning is authorized
 separately; its status/observation/transcript/table APIs are privileged read-only
-diagnostics. Terminal finish/stall/recovery transitions inform the originating
-builder, but this is not a domain action or a grant to modify a running instance beyond
-pausing, resuming, or stopping it.
+diagnostics. Terminal finish/stall/recovery transitions and limit-forced pauses inform the
+originating builder, but this is not a domain action or a grant to modify a running instance beyond
+pausing, resuming, or stopping it, and intervening in a stuck agent seat: acting
+for it on a turn the environment awaits (`act_for_seat`, validated like the
+seat's own action) or suspending and resuming it (`suspend_seat`/`resume_seat`).
 Per-seat Python namespaces are separate; local filesystem access is shared.
 Docker is the available isolation option for adversarial or secret-state play.

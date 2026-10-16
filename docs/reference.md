@@ -204,7 +204,7 @@ multiple humans and spectators alongside a human remain deferred.
 The builder provisions authorized runs through environments.start_instance and
 has privileged read-only status/observation/transcript/table APIs, and can pause,
 resume, or stop running instances. It does not act. Host
-finish/stall/recovery transitions notify the builder. Per-seat Python state and uncertain receipts are independent;
+finish/stall/recovery transitions and pauses forced by a run limit notify the builder. Per-seat Python state and uncertain receipts are independent;
 local Python still shares host-user filesystem access. Use Docker for adversarial
 play. No automatic Docker-to-local fallback exists.
 

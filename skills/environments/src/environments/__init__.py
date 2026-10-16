@@ -73,3 +73,34 @@ async def seat_transcript(instance: str, seat: str, since: int = 0) -> Json:
 
 async def table_log(instance: str, since_seq: int = 0) -> Json:
     return await host_request("environments.table_log", {"instance": instance, "since_seq": since_seq})
+
+
+async def view_instance(instance: str) -> Json:
+    """Public live-view URL for a running instance whose saved viewer lists its version."""
+    return await host_request("environments.view_instance", {"instance": instance})
+
+
+async def act_for_seat(instance: str, seat: str, action: str, reason: str, arguments: dict[str, Json] | None = None) -> Json:
+    """Take one action for a stuck agent seat on a turn the environment awaits from it.
+
+    The environment validates it like the seat's own action; only that seat is told the
+    builder acted and why. Works on a running, paused, or stalled run; a paused or
+    stalled run stays so until resume_instance. Use it only when the seat cannot act
+    itself, and choose the least consequential legal action unless the user said otherwise.
+    """
+    return await host_request("environments.act_for_seat", {"instance": instance, "seat": seat, "action": action, "arguments": arguments or {}, "reason": reason})
+
+
+async def suspend_seat(instance: str, seat: str, reason: str) -> Json:
+    """Take an agent seat out of play: its turn is cut and it gets no further turns.
+
+    An environment with missed_turn hears of each turn it awaits from the seat and may
+    play for it; otherwise the run stalls on that turn until you act_for_seat (then
+    resume_instance) or resume_seat. Tell the user which seat you suspended and why.
+    """
+    return await host_request("environments.suspend_seat", {"instance": instance, "seat": seat, "reason": reason})
+
+
+async def resume_seat(instance: str, seat: str) -> Json:
+    """Return a suspended seat to play; it receives the wakes held back while suspended."""
+    return await host_request("environments.resume_seat", {"instance": instance, "seat": seat})

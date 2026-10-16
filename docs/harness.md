@@ -711,7 +711,12 @@ wake is pending for it, the host appends a targeted status wake re-prompting
 the seat. Deadline retries and idle re-prompts draw on one per-seat budget of
 `idle_turn_retries`; the seat acting, a revision change during its turn, or a
 resume refunds it. Once the budget is spent, an idle turn stalls the run and a
-timeout pauses it. Before stalling, the host checks for undelivered wakes. A run
+timeout pauses it. A definition whose manifest declares `missed_turns` hears
+about each miss first through its `missed_turn(seat, report)` operation, which
+receives the cause (`idle`, `deadline`, or `suspended`; see Seat interventions), the consecutive miss count, and
+`idle_turn_retries`. Its own wake to the seat replaces the generic re-prompt;
+if it stops awaiting the seat or changes the revision, the host retries
+nothing and refunds the budget; otherwise the host proceeds as above. Before stalling, the host checks for undelivered wakes. A run
 also stalls when no seat is busy, no wake is pending, and no human wait explains
 quiescence. Without progress metadata a human table retains the legacy human-wait
 assumption; explicit metadata should describe actual waits.
@@ -719,11 +724,45 @@ assumption; explicit metadata should describe actual waits.
 `run.json`, also returned by `instance_status`, records per seat
 `time_to_action` (count, total and maximum milliseconds from turn start to first
 action), `deadline_retries`, `post_action_aborts`, and `idle_retries`, alongside
-operation and wake counts.
+operation and wake counts. It also records `suspended` seats with their reasons
+and `builder_actions`, the actions the builder took per seat.
+
+### Seat interventions
+
+A run can stop on one agent seat that cannot finish its turn, for example a model
+that keeps calling actions it does not have. The builder has three seat
+interventions, from its API or the builder prompt. All of them work on agent
+seats only (a human acts for themself) and on a running, paused, or stalled run.
+
+- **Act for a seat** (`act_for_seat`, `/env act_for`) takes one action for a seat
+  the environment's progress lists in `waiting_for`. It goes through the
+  environment's ordinary validation and commits a receipt like the seat's own
+  action. Any turn the seat is running is cut first. Only that seat receives a
+  private status notice naming the action and the reason. A paused or stalled run
+  stays so until resumed.
+- **Suspend a seat** (`suspend_seat`, `/env suspend`) cuts the seat's running
+  turn and takes it out of play. It gets no wakes or turns, and its own actions,
+  inputs, Python and messages are refused. Deliveries addressed to it are kept,
+  not acknowledged. While the environment awaits a suspended seat, a definition
+  with `missed_turns` hears so through `missed_turn` with cause `suspended`, once
+  per progress revision, and may act for the seat. Otherwise the run goes
+  quiescent and stalls, and its reason names the suspended seat it waits on.
+- **Resume a seat** (`resume_seat`, `/env resume_seat`) returns it to play. Held
+  wakes are delivered; a seat the environment awaits with nothing left to deliver
+  is told to observe and act.
+
+Interventions are run controls, not game logic: they never edit environment
+state, and what a seat's absence means stays with the environment. Every
+intervention authenticates with the run's builder token, so a player at a table
+cannot act for another seat.
 
 Host polling enforces bounds/drains deliveries; it is not a domain tick API.
-Finish/stall/recovery transitions inform the originating builder through a
-session message, without granting participant/control tools.
+Finish/stall/recovery transitions, and a pause the run's own bounds forced
+(operation, wall-clock, or seat turn limit), inform the originating builder through a
+session message that carries the run's reason, without granting participant
+tools; a stall message also points to the seat interventions. A pause or stop
+a requester asked for is not reported. A run resumed and stopped again notifies
+the builder again.
 
 ## Persistence, restart, and recovery
 
@@ -735,6 +774,8 @@ environments/
   definitions/<id>/<hash>/              metadata and immutable source
   prepared/                            backend dependency caches
   validation/<draft-id>/                attempts/latest report
+  report-templates/<definition-id>/     reusable report notebooks
+  viewers/<definition-id>/<viewer-id>/  optional replay pages for ended runs
   instances/<instance-id>/
     instance.json                      pinned version, policy, roster
     owner.lock                         exclusive active owner
@@ -742,12 +783,14 @@ environments/
     operations/                        engine intents
     workspace/                         engine scratch, separate from seat scratch
     run.json                           phase/counters/wake/settlement state
+    snapshots.jsonl                    every committed snapshot: keyframes and deltas
     table.jsonl                        all durable routed deliveries
     view-cursor.json                    human/public view cursor
     deliveries/<seat-id>.json           acknowledged seat delivery cursors
     host-conversation.jsonl             allowed table history
     host-session.json, host-config.json host identity and restart config
-    builder-session.json, builder-token.json originating builder/capability
+    builder-session.json, builder-saved-session.json,
+    builder-token.json                       originating builder/capability
     seats/<seat-id>/
       conversation.jsonl               private model transcript
       session.json, token.json          session/capability
@@ -766,6 +809,16 @@ Definitions are content-addressed with integrity checks. New runs can select
 a saved version; existing instances stay pinned regardless of later saves.
 Creation timestamps support newest-first selection; legacy metadata falls back
 to file creation/modification time.
+
+Each commit appends its snapshot to `snapshots.jsonl` before the checkpoint is
+written. The first row a process writes is a full keyframe; later rows are JSON
+Patch deltas (`add`, `replace`, `remove`) against the previous committed
+sequence, or a keyframe when that would be smaller. A row past the checkpoint's
+committed sequence is ignored, and a later row for the same sequence replaces
+it. Recovery appends a keyframe of the reconciled snapshot. A failed history
+append is handled like a failed checkpoint write: the operation needs explicit
+recovery. `EnvironmentStore::snapshot_history` reconstructs every recorded state.
+Runs started before history existed have none for their earlier operations.
 
 The exclusive lock prevents concurrent owners. Supervised host/seat workers
 restore state and re-adopt seats after restart. Accepted pending wakes can replay.
@@ -814,13 +867,24 @@ receipts or delete intents to clear the block. Restore the reconciled instance.
 
 The builder's activity dock shows an Environments group beside subagents,
 heartbeats and shells: one item per run the builder or one of its subagents
-provisioned, never one per seat. Each run belongs to the builder that created it
-(the identity stored in `builder-session.json`), whichever session later resumes
-or stops it. The group lists running, paused and stalled runs; finished and
-stopped runs leave it. Opening it lists the runs: Enter spectates an agents-only
-run, a run with a human seat reopens through `/env resume`, and `x` stops the
-run. Pause and resume remain table commands. Host and seat sessions are hidden
-from the agents view, so the dock group is how a run is reached.
+provisioned, never one per seat. Each run belongs to the builder that created it,
+whichever session later resumes or stops it. The builder is identified by its
+saved session id (`builder-saved-session.json`), which stays the same when the
+daemon restarts or the session reopens. Runs saved before that id was recorded
+have only the builder's active id (`builder-session.json`), which changes on
+every reopen; once it no longer matches a session, they are listed under "Other
+runs". The builder's own `pause_instance`, `resume_instance` and `stop_instance`
+use the same identity: a reopened builder still controls the runs saved under
+its session, and refuses runs saved under another one. The group's count covers the session's running, paused and stalled runs.
+Opening it lists the runs, live ones first and then the ended ones (stopped,
+finished, or needing recovery). Enter spectates an agents-only live run, a live run with a
+human seat reopens through `/env resume`, and `x` stops a live run. Enter on an
+ended run shows its saved transcript read-only, in place of the builder's chat:
+it scrolls, but takes no messages or actions, and Esc returns to the runs list.
+Pause and resume remain table commands. Host and seat sessions are hidden from
+the agents view, so the dock group is how a run is reached. The agents view's
+Environments column counts each session's runs in total and by phase, for
+example `3 (1 running, 2 stopped)`.
 
 The importable skill calls validated Rust host handlers and returns JSON:
 
@@ -837,9 +901,13 @@ The importable skill calls validated Rust host handlers and returns JSON:
 | `pause_instance(instance)` | Pauses a run |
 | `resume_instance(instance)` | Resumes a paused or stalled run on a live host |
 | `stop_instance(instance)` | Permanently stops a run and its seat sessions |
+| `act_for_seat(instance, seat, action, reason, arguments=None)` | Takes an awaited turn for a stuck agent seat |
+| `suspend_seat(instance, seat, reason)` | Takes an agent seat out of play |
+| `resume_seat(instance, seat)` | Returns a suspended seat to play |
 | `observe_seat(instance, seat)` | Privileged filtered seat observation |
 | `seat_transcript(instance, seat, since=0)` | Private transcript after line offset |
 | `table_log(instance, since_seq=0)` | Full routing log after sequence |
+| `view_instance(instance)` | Public live-view URL for a running instance |
 
 After authorization and saving relay:
 
@@ -867,6 +935,70 @@ run limits from its estimate of operations, wakes, and duration.
 The human types slash commands; the builder cannot execute them through shell/
 Python. It uses management APIs or gives the exact command to the user.
 
+### Viewers
+
+A viewer is an optional, environment-specific web page that replays an ended run
+from its snapshot history, or follows a running one live. The builder creates one
+only when the user explicitly asks; building an environment never includes one
+by default. Using an existing
+compatible viewer is the default: when the user asks for a run, the builder
+launches the viewer without asking (`view_instance` for a running instance, a
+replay export for an ended one). The environments
+skill's `assets/viewers/viewer_tool.py` saves viewer source under
+`viewers/<definition-id>/<viewer-id>/` with the definition versions it supports,
+and exports one self-contained HTML file per run under
+`instances/<instance-id>/viewers/<viewer-id>/`. The export holds one step per
+committed operation (state, the operation, and its routed table events), the
+harness playback bar, and the `env` bridge the viewer draws from. It runs in a
+sandboxed frame whose content security policy allows inline code and data URLs
+only, so it needs no server or network. Exports cover finished or stopped runs
+only, and show every seat's state. The skill's
+[viewers reference](../skills/environments/references/viewers.md) defines the
+bridge and the rules.
+
+Live viewing uses the environment's optional `frame(perspective)`, where the
+perspective is `{"kind":"public"}` or `{"kind":"seat","seat":id}` and the
+environment filters it like `observe`. Validation calls it for every perspective
+when it is defined, and requires a JSON object under 1 MiB. `/env view` asks the
+run's host for a URL and opens it in the browser. The host starts a loopback HTTP
+server on 127.0.0.1 on the first request. It serves the saved viewer that lists
+the run's version, injects the bridge, and streams one step per commit as
+server-sent events: a keyframe, then JSON Patch deltas, each with the routed table
+events visible to the perspective. Commits close together can arrive as one step.
+Each URL carries a random token bound to one perspective; requests with another
+host name are refused, and the page's content security policy allows only its own
+origin. At the table, the human may view their own seat (the default) or the
+public perspective. From the builder, `/env view <instance-id>` and
+`view_instance(instance)` give the public perspective only. A seat sees its own
+operation details; other operations reach a live page only through its frames and
+public events. Acting from a viewer is not implemented.
+
+
+### Builder boundaries, changelogs, and harness recommendations
+
+The builder edits environments, never the harness: not harness code, prompt
+layers, skills, or the SDK and runner copies inside a draft. The rule is in the
+builder prompt, so it holds when Prime Env runs outside its own checkout and
+`AGENTS.md` is out of reach. When the builder diagnoses a problem that would
+affect any environment, it records a recommendation instead of changing anything,
+and tells the user where.
+
+Two kinds of note live under the environments root, beside `definitions/` and
+never inside it (a version is the hash of its source, and `definitions/<id>/`
+holds only version directories):
+
+| Location | Content |
+| --- | --- |
+| `changelogs/<definition-id>/CHANGELOG.md` | One entry per saved version, newest first: what changed from the previous version, why, and the effect on report templates and viewers pinned to older versions |
+| `harness-recommendations/<date>-<slug>.md` | One harness-level change the builder could not make: problem (generic), evidence, proposed change, optional workaround, `Status: open` |
+
+The builder writes a changelog entry whenever it saves a version. The
+`environments` skill's `assets/maintenance/maintenance_tool.py` writes both
+kinds of note and lists saved versions that have no entry; its
+[maintenance reference](../skills/environments/references/maintenance.md) defines
+the rules and the entry format. The user reviews `harness-recommendations/` and
+turns accepted items into ordinary harness changes.
+
 ## Command reference
 
 Humans type the slash commands below. The builder uses the importable Python
@@ -890,20 +1022,24 @@ partial equivalents describe the data available without the terminal interaction
 | `/env enter <id> local\|docker <roster-json>` | Builder | Starts directly with the supplied backend/roster and default setup arguments. | `start_instance(definition, seats, limits=limits, policy=policy)` |
 | `/env enter <id> <full-request-json>` | Builder | Starts directly when JSON includes `roster`; accepts policy, roster, and `setup_arguments`. | `start_instance(definition, seats, limits=limits, policy=policy, config=setup_arguments)` |
 | `/env runs` | Builder | Lists persisted instances. | `list_instances()` |
+| `/env view [public]` / `/env view <instance-id>` | Table / Builder | Opens the live viewer in the browser: the human's seat (or `public`) at the table, the public perspective from the builder. Needs `frame(perspective)` and a saved viewer listing the run's version. | `view_instance(instance)` (public URL) |
 | `/env watch <instance-id>` | Builder | Attaches to the public spectator table of an agents-only instance; rejects human-occupied tables. | No attachment API; `table_log(instance, since_seq=0)` is a privileged log read, including private deliveries. |
 | `/env resume [instance-id]` | Builder | Without an ID, opens saved-instance suggestions; with an ID, restores the pinned instance and attaches without rerunning setup/initialization. A paused run may still need `resume_run`. | None |
 | `/env recover <instance-id> <recovery-json>` | Builder | Reconciles uncertain operations using inspected evidence, a replacement snapshot, matching receipts, and required Python resets. Requires released ownership; does not replay actions. | None |
 | `/env status` | Table | Refreshes table state and actions, displays run phase/reason, and shows the allowed observation. | `instance_status(instance)` reads run state only. |
 | `/env observe` | Table | Refreshes table state/actions and displays the allowed observation. | `observe_seat(instance, seat)` is a privileged read of a specified seat's filtered observation. |
 | `/env seats` | Table | Displays roster seats, including identities, roles, occupants, and configured models. | No dedicated method; `list_instances()` supplies persisted instance/roster metadata. |
-| `/env act [action]` | Human table | Opens the action picker/form, selecting the named action when supplied. | None; builder cannot play. |
-| `/env act <action> <arguments-json>` | Human table | Submits the specified action and JSON arguments as the human seat. | None; builder cannot play. |
+| `/env act [action]` | Human table | Opens the action picker/form, selecting the named action when supplied. | None; the builder plays no seat, though `act_for_seat` can take a stuck agent seat's turn. |
+| `/env act <action> <arguments-json>` | Human table | Submits the specified action and JSON arguments as the human seat. | None; the builder plays no seat, though `act_for_seat` can take a stuck agent seat's turn. |
 | `/env msg <seat-id> <text>` | Human table | Sends a private seat message when direct messaging is enabled. | None |
 | `/env pause` | Table | Pauses dispatch and new mutations, interrupts active seat work, and retains state/pending wakes. An already admitted action may finish; pause does not roll it back. | `pause_instance(instance)` |
 | `/env pause [instance-id]` | Builder | Without an ID, lists running instances; with an ID, pauses that run (live host, or the persisted run once its host has closed). | `pause_instance(instance)` |
 | `/env resume`, `/env resume_run` | Table | Returns a paused or stalled run to running, replays pending seat inputs, and clears no-progress/busy bookkeeping; cumulative limits remain. | `resume_instance(instance)` |
 | `/env stop` | Table | Marks the run permanently stopped, interrupts active work, and shuts down seats. Saved state/logs remain; ordinary resume cannot restart it. | `stop_instance(instance)` |
 | `/env stop [instance-id]` | Builder | Without an ID, lists running, paused, and stalled instances; with an ID, stops that run permanently. | `stop_instance(instance)` |
+| `/env act_for <instance-id> <seat> <action> [arguments-json]` | Builder | Takes the turn the environment awaits from an agent seat (see Seat interventions). | `act_for_seat(instance, seat, action, reason, arguments)` |
+| `/env suspend <instance-id> <seat> [reason]` | Builder | Takes an agent seat out of play until resumed. | `suspend_seat(instance, seat, reason)` |
+| `/env resume_seat <instance-id> <seat>` | Builder | Returns a suspended seat to play. | `resume_seat(instance, seat)` |
 | `/env cancel` | Either | Closes the environment form and clears editor input; does not stop the run. | None |
 | `/env leave` | Table | Returns to the builder. Leaving a human table pauses the run, stops seats, and releases ownership; leaving an agents-only spectator table keeps the run alive. | None |
 | `/tutorial` | Either | Shows the onboarding guide, including environment examples. | None |

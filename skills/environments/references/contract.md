@@ -22,6 +22,7 @@ validation or add tools.
 | `recommended_backend` | `local` or `docker`; a recommendation, not consent |
 | `direct_messages` | Optional; defaults to enabled. `false` forbids the independent seat-message channel |
 | `agent_context` | Optional; `"conversation"` (default) or `"stateless"`. See [Agent context](#agent-context) |
+| `missed_turns` | Optional, protocol 2; `true` when the environment defines `missed_turn`. See [coordination](coordination.md#missed-turns) |
 
 A role has `name`, optional `description`, `min_seats`, `max_seats`, and
 `occupants`. Defaults are one required seat, one maximum seat, and both occupant
@@ -60,6 +61,8 @@ environment as its default export. Use `sdk.py` or `./sdk.ts` from the draft.
 | `describe_actions()` | Return public action descriptors with schemas and permitted roles |
 | `observe(seat)` | Return only the information that seat may see; no mutation or notices |
 | `agent_view(seat)` | Optional. What an agent seat's model sees each turn under `agent_context: "stateless"`; defaults to `observe(seat)`. No mutation or notices |
+| `frame(perspective)` | Optional, and only when the user asked for live viewing. What a live viewer draws for `{"kind":"public"}` or `{"kind":"seat","seat":id}`, filtered like `observe`; a JSON object under 1 MiB. No mutation or notices. See [viewers](viewers.md) |
+| `missed_turn(seat, report)` | Optional, with manifest `missed_turns`. Called when an awaited agent seat's turn ends without an action; `report` is `{"cause": "idle", "deadline", or "suspended", "misses": n, "limit": n}`. May warn, act for the seat, or do nothing. See [coordination](coordination.md#missed-turns) |
 | `handle_input(seat, text)` | Process seat text and return exactly `{"observation": ...}`; select resulting notices explicitly |
 | `invoke(seat, action, arguments)` | Check domain legality, mutate, return schema-valid output, publish attention/progress/completion |
 | `snapshot()` | Return JSON covering all state needed to continue, including roster, phase, private state, and random state where relevant |
@@ -68,8 +71,8 @@ environment as its default export. Use `sdk.py` or `./sdk.ts` from the draft.
 
 Python methods may be synchronous or awaitable. TypeScript methods may return
 values or promises. All results and snapshots must be JSON serializable.
-SDK notifications are permitted only in `initialize`, `invoke`, and
-`handle_input`; reads and restoration cannot create turns.
+SDK notifications are permitted only in `initialize`, `invoke`, `handle_input`,
+and `missed_turn`; reads and restoration cannot create turns.
 
 An action descriptor contains `name`, `description`, `input_schema`,
 `output_schema`, and `roles`. Name it so `env_<name>` is a useful model tool.
@@ -109,9 +112,10 @@ environment, not the transcript, carries history:
   `message_seat` keep their normal replies.
 - A wake that waited in the queue while the seat's previous turn ran gets a
   fresh view when its turn starts. Every model-generated action is also bound to
-  the committed state its request was written from: if any engine operation (an
-  action or `say`, even a rejected one) committed since, the host refuses the
-  call without running your code and returns the current view. Design actions to
+  the committed state its request was written from: if an engine operation (an
+  action or `say`) changed the environment's state since, the host refuses the
+  call without running your code and returns the current view. Rejected actions
+  leave the state unchanged and never invalidate other seats' views. Design actions to
   be safe to reconsider, and note that simultaneous seats refuse each other's
   stale calls and retry from the fresh view. `observe`/`agent_view` reads never
   invalidate a view.

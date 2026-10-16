@@ -80,6 +80,9 @@ await environments.resume_instance(instance=instance)
 await environments.observe_seat(instance=instance, seat="alice")
 await environments.seat_transcript(instance=instance, seat="alice", since=0)
 await environments.table_log(instance=instance, since_seq=0)
+await environments.act_for_seat(instance=instance, seat="bob", action="pass", reason="why")
+await environments.suspend_seat(instance=instance, seat="bob", reason="why")
+await environments.resume_seat(instance=instance, seat="bob")
 ```
 
 Omitted policy uses the user-selected validation policy. A supplied policy can
@@ -94,15 +97,25 @@ delivery log after a sequence, including targeted events. These are debugging
 privileges, not spectator visibility. Do not disclose inspected private content
 to a player when the environment's rules require secrecy. Offline reads can
 inspect saved state after ownership is released; they never replay actions.
-The Python builder API has no act or participant tools. The builder that
+The Python builder API has no participant tools. Its only way to act for a seat
+is a seat intervention on a stuck agent seat: `act_for_seat` takes a turn the
+environment awaits from it, validated like the seat's own action and reported
+privately to that seat; `suspend_seat` takes the seat out of play (no wakes or
+turns, its own calls refused) until `resume_seat`. While the environment awaits a
+suspended seat, a definition with `missed_turns` hears so with cause `suspended`;
+otherwise the run stalls with a reason naming the seat. These work on running,
+paused, and stalled runs, never on the human seat, and need a live host. The user
+has the same from the builder with `/env act_for`, `/env suspend`, and
+`/env resume_seat`. The builder that
 provisioned an instance can `pause_instance` it, `resume_instance` a paused or
 stalled one (the same retained-wake replay as `/env resume_run`; cumulative limits
 still apply), or `stop_instance` it (permanent). All reach a live host with the
 builder capability. Once the host has closed, pause and stop mark the persisted
 run, but resume is refused until the user re-enters the instance.
 The user can do the same from the builder with `/env pause` and `/env stop`.
-Finish, stall, and recovery transitions send an informational message to the
-originating builder. That message does not authorize mutation.
+Finish, stall, and recovery transitions send an informational message, with the
+run's reason, to the originating builder. That message does not authorize
+mutation; a stall message points to the seat interventions above.
 
 ## Limits and restart semantics
 

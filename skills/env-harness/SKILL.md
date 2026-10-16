@@ -69,10 +69,14 @@ module (`create_environment`, `select_policy`, `validate_environment`,
 | `/tutorial` | both | Shows the onboarding walkthrough |
 
 In a builder session, the activity dock has an Environments group (`◈ N
-environments`, plus paused and stalled counts). It shows one row per run that
-the session or its subagents provisioned, not one per seat. Opening it lists
-the runs: Enter watches an agents-only run or reopens a human table, and `x`
-stops a run. Host and seat sessions are hidden from the agents view.
+environments`, plus paused and stalled counts, live runs only). It shows one
+row per run that the session or its subagents provisioned, not one per seat.
+Runs stay with the session that started them across daemon restarts; older
+runs that can't be matched to a session are listed under "Other runs".
+Opening it lists live runs first, then ended ones: Enter watches an agents-only
+run or reopens a human table, and `x` stops a run. Enter on an ended run shows
+its transcript read-only; nothing can be sent to it, and Esc goes back. Host
+and seat sessions are hidden from the agents view.
 
 Plain chat at a human table goes through `handle_input` from the bound human
 seat. Explicit environment notices decide which agents wake after a commit.
@@ -212,6 +216,8 @@ instance files still contain the originals.
   scratch/Python state, and conversation history.
 - Intents are fsynced before actions run; receipts and the resulting snapshot are
   committed together. Repeating an operation ID returns the recorded result.
+- Every committed snapshot is also appended to the instance's `snapshots.jsonl`
+  (a keyframe, then deltas), so an ended run can be replayed step by step.
 - An interrupted operation blocks `/env resume`. It is never replayed. Inspect the
   saved state and any external effects first, then:
 

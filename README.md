@@ -23,18 +23,20 @@ hidden information stays hidden.
 Prime Env is built to make that whole workflow cheap:
 
 - **Create** an environment by conversation. The builder asks about rules,
-  participants, turn flow, privacy, deadlines and failure handling before it
-  writes any code.
+participants, turn flow, privacy, deadlines and failure handling before it
+writes any code.
 - **Test** it before anyone plays. Every environment ships behavioral checks that
-  must pass; saved definitions are immutable, content-addressed versions, so a
-  result always names the exact rules that produced it.
+must pass; saved definitions are immutable, content-addressed versions, so a
+result always names the exact rules that produced it.
 - **Run** it with humans and models at the same table: one human and one agent,
-  several agent seats, or agents only. Agent reasoning stays in private seat
-  sessions and never leaks to other participants.
+several agent seats, or agents only. Agent reasoning stays in private seat
+sessions and never leaks to other participants.
 - **Control** execution. Choose local or Docker per run and grant networking,
-  mounts, secrets and integrations explicitly, or not at all.
+mounts, secrets and integrations explicitly, or not at all.
 - **Evaluate** the outcome. Instances persist every action and receipt, survive
-  crashes, and can be turned into notebook reports from reusable templates.
+crashes, and can be turned into notebook reports from reusable templates.
+
+
 
 ## Built on Prime Agent
 
@@ -82,13 +84,15 @@ is a good introduction to what an environment is and why they matter.
 
 ## Examples
 
-[`examples/`](examples/README.md) ships two complete environments you can try
+`[examples/](examples/README.md)` ships two complete environments you can try
 immediately:
 
-| Example | What it is |
-| --- | --- |
-| `texas-holdem` | No-limit Texas Hold'em for 2 to 9 seats, human or agent, with private cards and a game report |
+
+| Example                            | What it is                                                                                    |
+| ---------------------------------- | --------------------------------------------------------------------------------------------- |
+| `texas-holdem`                     | No-limit Texas Hold'em for 2 to 9 seats, human or agent, with private cards and a game report |
 | `sequential-card-market-stateless` | A two-player card-value trading game with cumulative P&L, stateless agents, and a game report |
+
 
 ```bash
 python3 scripts/install_examples.py
@@ -104,6 +108,8 @@ save them.
 - [Environment forms](docs/environment-forms.md): terminal forms for setup and actions.
 - [Verification record](VERIFICATION.md): checks run and known platform gaps.
 - [Future ideas](FUTURE_IDEAS.md).
+
+
 
 ## Development
 
@@ -122,6 +128,8 @@ pressure.
 > execution is not a sandbox. Use Docker, and grant only what an environment needs,
 > for anything you do not trust.
 
+
+
 ## License
 
 MIT, see [LICENSE](LICENSE). The inherited Prime Agent code is
@@ -139,3 +147,4 @@ If you use the underlying harness in research, please cite Prime Agent:
   year={2026}
 }
 ```
+
