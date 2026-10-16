@@ -510,11 +510,16 @@ pub const FEATURE_NAMES: &[&str] = &[
     "environment_run_control",
     "environment_run_limit",
     "environment_turn_retry",
+    "environment_missed_turn",
     "environment_stale_view",
     "environment_obsolete_wake",
     "environment_spectate",
     "environment_privileged_read",
     "environment_runs_panel",
+    "environment_run_transcript",
+    "environment_live_view",
+    "environment_seat_intervention",
+    "idle_notification",
 ];
 
 /// The #2117 feature outcomes.
@@ -544,6 +549,13 @@ pub const CONFIGURATION_CHOICES: &[&str] = &[
     "builder_pause",
     "builder_resume",
     "builder_stop",
+    "act",
+    "builder_act",
+    "suspend",
+    "builder_suspend",
+    "idle",
+    "deadline",
+    "suspended",
     "unknown",
 ];
 
