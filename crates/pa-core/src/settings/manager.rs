@@ -905,6 +905,13 @@ impl SettingsManager {
         self.global.rlm_max_depth
     }
 
+    /// `notifyOnIdle` (default false): whether a depth-0 chat posts a desktop
+    /// notification when it goes idle after work a person sent.
+    #[must_use]
+    pub fn get_notify_on_idle(&self) -> bool {
+        self.global.notify_on_idle.unwrap_or(false)
+    }
+
     /// `number | "off" | "none"` -> finite minutes or Off; malformed falls
     /// back to the default (90).
     #[must_use]
@@ -1207,6 +1214,14 @@ mod tests {
         let manager = SettingsManager::from_storage(storage);
         assert_eq!(manager.get_default_provider(), None);
         assert_eq!(manager.get_theme(), Some("prime"));
+    }
+
+    #[test]
+    fn notify_on_idle_defaults_to_false() {
+        let mut manager = SettingsManager::in_memory(&Settings::default());
+        assert!(!manager.get_notify_on_idle());
+        manager.global.notify_on_idle = Some(true);
+        assert!(manager.get_notify_on_idle());
     }
 
     #[test]

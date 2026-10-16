@@ -348,6 +348,9 @@ pub struct Settings {
     pub autonomous: Option<AutonomousSettings>,
     pub shell_path: Option<String>,
     pub quiet_startup: Option<bool>,
+    /// Post a macOS notification when a top-level (depth 0) chat goes idle.
+    /// Default: false.
+    pub notify_on_idle: Option<bool>,
     pub shell_command_prefix: Option<String>,
     pub npm_command: Option<Vec<String>>,
     pub mcp_servers: Option<serde_json::Map<String, serde_json::Value>>,
