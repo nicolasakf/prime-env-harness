@@ -161,9 +161,9 @@ const SESSION_TITLE_MAX_CELLS: usize = SESSION_NAME_COLUMN_MAX_CELLS - 2;
 /// The widest the MODEL column asks for.
 const MODEL_COLUMN_MAX_CELLS: usize = 32;
 
-/// The widest the ENVIRONMENTS column asks for (`99 running, 99 paused,
-/// 99 stalled` and a little slack).
-const ENVIRONMENTS_COLUMN_MAX_CELLS: usize = 34;
+/// The widest the ENVIRONMENTS column asks for (`99 (99 running,
+/// 99 paused, 99 stopped)` and a little slack); a longer cell truncates.
+const ENVIRONMENTS_COLUMN_MAX_CELLS: usize = 40;
 
 /// The gap between two columns.
 const COLUMN_GAP: usize = 2;
@@ -736,14 +736,10 @@ pub fn build_layout(
     let environments: HashMap<String, EnvironmentTally> = rows
         .iter()
         .map(|row| {
-            let tally = row
-                .summary
-                .get("activeSessionId")
-                .and_then(Value::as_str)
-                .map_or_else(EnvironmentTally::default, |builder| {
-                    EnvironmentTally::for_builder(runs, builder)
-                });
-            (row.identity.clone(), tally)
+            (
+                row.identity.clone(),
+                EnvironmentTally::for_session(runs, &row.summary),
+            )
         })
         .collect();
 

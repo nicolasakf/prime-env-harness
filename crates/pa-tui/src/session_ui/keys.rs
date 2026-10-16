@@ -369,9 +369,10 @@ impl SessionUi {
         // The bash view owns the whole frame while open (like its key
         // dispatch): a paste never lands in the hidden editor prompt,
         // where a later Enter would submit it unedited. The read-only
-        // goal panel and info panel consume it the same way.
+        // goal panel, info panel, and run transcript consume it the same way.
         if view.bash_view.is_some()
             || view.environment_runs_view.is_some()
+            || view.environment_run_transcript.is_some()
             || view.goal_panel.is_some()
             || view.info_panel.is_some()
         {
@@ -465,6 +466,10 @@ impl SessionUi {
         // The Environments runs panel owns the frame the same way.
         if view.environment_runs_view.is_some() {
             return self.handle_environment_runs_key(key, view).await;
+        }
+        // An ended run's read-only transcript owns the frame the same way.
+        if view.environment_run_transcript.is_some() {
+            return self.handle_environment_run_transcript_key(key, view).await;
         }
         // The read-only goal panel owns the frame the same way.
         if view.goal_panel.is_some() {
@@ -595,8 +600,10 @@ impl SessionUi {
         // The activity dock owns focus while focused: Enter (and a second
         // Alt+A) opens the focused group's own view directly (the
         // operator's direct-navigation redesign), left/right step the
-        // dock's groups — except left from the subagents selection,
-        // which opens the agents view (the operator's 2026-09-28 ask) —
+        // dock's groups — except the back key (default left) on the
+        // subagents selection, which releases the focus and falls
+        // through to the editor path so it goes back a level exactly
+        // like the same key from the prompt (`app.agents.back`) —
         // up/cancel/back returns to the editor, expand cycles the
         // conversation detail and KEEPS the focus, and every other key
         // falls through after releasing the focus (TS `onChatAction` ->
@@ -610,19 +617,9 @@ impl SessionUi {
                 self.open_dock_group_view(view);
                 return Ok(());
             }
-            if id == "left" && self.activity_group == crate::chrome::ActivityGroup::Subagents {
-                // Left from the subagents selection opens the agents
-                // view (the operator's 2026-09-28 muscle-memory ask —
-                // the same route as Enter and clicking the group): the
-                // dock's subagents item is the row's own entry into
-                // the scoped agents view, and left reads as `agents
-                // back` everywhere else on this surface (the empty
-                // editor's `app.agents.back` hands the pane to the
-                // agents view the same way).
-                self.open_dock_group_view(view);
-                return Ok(());
-            }
-            if id == "left" || id == "right" {
+            let back_to_parent = self.activity_group == crate::chrome::ActivityGroup::Subagents
+                && kb.matches(&id, "app.agents.back");
+            if !back_to_parent && (id == "left" || id == "right") {
                 // One press, one group: the step lands on the
                 // neighboring rendered group and wraps at the row's
                 // ends, so an empty group is still visited (the
@@ -641,9 +638,10 @@ impl SessionUi {
                 self.dirty = true;
                 return Ok(());
             }
-            if kb.matches(&id, "tui.select.up")
-                || kb.matches(&id, "tui.select.cancel")
-                || kb.matches(&id, "app.agents.back")
+            if !back_to_parent
+                && (kb.matches(&id, "tui.select.up")
+                    || kb.matches(&id, "tui.select.cancel")
+                    || kb.matches(&id, "app.agents.back"))
             {
                 self.subagents_focused = false;
                 self.update_subagent_summary(view);
@@ -654,6 +652,8 @@ impl SessionUi {
                 self.cycle_detail(view);
                 return Ok(());
             }
+            // The back key lands here too: the focus releases and the
+            // key continues down to the editor's agents-back route.
             self.subagents_focused = false;
             self.update_subagent_summary(view);
         }

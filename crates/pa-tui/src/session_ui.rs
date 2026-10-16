@@ -141,6 +141,11 @@ pub(crate) struct SessionUi {
     environment_definitions: Vec<pa_types::environments::Definition>,
     environment_actions: Vec<pa_types::environments::ActionDescriptor>,
     environment_pending: Option<String>,
+    /// The builder session this TUI opened a table from: `/env leave`
+    /// returns there. The builder id a run saved is only the id that
+    /// session had when the run was entered, and it changes whenever the
+    /// session reopens.
+    environment_return_session: Option<String>,
     environment_failures: mpsc::UnboundedSender<environments::EnvironmentRequestFailure>,
     pub(crate) client: DaemonClient,
     pub(crate) active_session_id: String,

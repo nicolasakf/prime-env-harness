@@ -350,13 +350,13 @@ fn the_environments_cell_counts_the_runs_the_session_provisioned() {
         run("s-builder", "running"),
         run("s-builder", "running"),
         run("s-builder", "paused"),
-        run("s-builder", "stalled"),
+        run("s-builder", "stopped"),
         run("s-other", "running"),
     ];
     let layout = build_layout(&mode.rows, &mode.environment_runs, 120);
     let text = flat(&mode.render_row(&mode.rows[index], &layout, 120, false));
     assert!(
-        text.contains("2 running, 1 paused, 1 stalled"),
+        text.contains("4 (2 running, 1 paused, 1 stopped)"),
         "environments cell: {text:?}"
     );
     assert!(layout.legend.contains("Environments"));

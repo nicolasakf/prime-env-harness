@@ -147,7 +147,15 @@ impl SessionUi {
                     .client
                     .supports_server_capability(pa_types::environments::ENVIRONMENT_CAPABILITY))
             .then(|| {
-                let runs = self.scoped_environment_runs();
+                // Like the shells count, the dock counts the session's live
+                // runs only; ended and unmatched runs stay rows inside the
+                // runs panel.
+                let runs: Vec<_> = self
+                    .scoped_environment_runs()
+                    .own
+                    .into_iter()
+                    .filter(|run| !run.phase.is_terminal())
+                    .collect();
                 crate::chrome::EnvironmentRunCounts {
                     total: runs.len(),
                     paused: runs

@@ -57,6 +57,7 @@ impl SessionUi {
             environment_definitions: Vec::new(),
             environment_actions: Vec::new(),
             environment_pending: None,
+            environment_return_session: None,
             environment_failures,
             client,
             active_session_id: String::new(),
@@ -704,6 +705,7 @@ impl SessionUi {
         if matches!(kind, RebuildKind::Rebind) {
             view.bash_view = None;
             view.environment_runs_view = None;
+            view.environment_run_transcript = None;
             // The goal panel dies with the old session too: it is a
             // snapshot of the previous session's goal state, and until
             // the new session's own `goal_update` lands it would keep

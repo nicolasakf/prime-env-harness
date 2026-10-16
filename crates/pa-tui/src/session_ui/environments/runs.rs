@@ -1,39 +1,58 @@
 //! The Environments dock group: the runs this builder session provisioned,
 //! their background refresh, and the runs panel's open and stop hand-offs.
 use super::super::{picker_viewport_rows, UI_REQUEST_TIMEOUT_MS};
-use super::{json, AgentView, DaemonCommand, Duration, Map, Result, SessionUi};
+use super::{json, AgentView, DaemonCommand, Duration, Map, Result, SessionUi, Value};
 use crate::chrome::ActivityGroup;
 use crate::environment_runs_view::{
-    is_agents_only, runs_of_builders, EnvironmentRunsAction, EnvironmentRunsView,
+    is_agents_only, EnvironmentRunsAction, EnvironmentRunsView, RunOwners, ScopedRuns,
 };
 use crate::subagents::{descendant_entries, SessionIdentity};
 use crossterm::event::KeyEvent;
 use pa_types::environments::InstanceRun;
 
-/// A landed `controls` fetch: every non-terminal run, or the fetch error
-/// that keeps the last list (stale-while-revalidate).
-pub(crate) struct EnvironmentRunsUpdate {
-    pub(crate) runs: Result<Vec<InstanceRun>, String>,
+/// A landed background fetch for the Environments group.
+pub(crate) enum EnvironmentRunsUpdate {
+    /// A `controls` fetch: every run, live and ended, or the fetch error
+    /// that keeps the last list (stale-while-revalidate).
+    Runs(Result<Vec<InstanceRun>, String>),
+    /// A `transcript` fetch for the ended run `id`: its saved messages.
+    Transcript {
+        id: String,
+        messages: Result<Vec<Value>, String>,
+    },
 }
 
 impl SessionUi {
     /// The runs this session's Environments group shows: the ones this
     /// session provisioned plus those its subagents did, matched on the
-    /// builder identity each run persists. A run stays with the builder that
+    /// builder identity each run persists (its saved session id, which
+    /// survives restarts, or for older runs its active id), and the older
+    /// runs no session can be matched to. A run stays with the builder that
     /// created it, whichever session later resumed or stopped it.
-    pub(crate) fn scoped_environment_runs(&self) -> Vec<InstanceRun> {
+    pub(crate) fn scoped_environment_runs(&self) -> ScopedRuns {
         let identity = SessionIdentity::new(
             (!self.active_session_id.is_empty()).then(|| self.active_session_id.clone()),
             (!self.session_id.is_empty()).then(|| self.session_id.clone()),
             self.session_file.clone(),
         );
-        let mut builders = vec![self.active_session_id.as_str()];
-        builders.extend(
-            descendant_entries(&self.roster, &identity)
-                .into_iter()
-                .filter_map(|entry| entry["summary"]["activeSessionId"].as_str()),
-        );
-        runs_of_builders(&self.environment_runs, &builders)
+        let descendants = descendant_entries(&self.roster, &identity);
+        let summary_ids = |key: &str| {
+            descendants
+                .iter()
+                .filter_map(|entry| entry["summary"][key].as_str())
+                .collect::<Vec<_>>()
+        };
+        let mut owners = RunOwners {
+            saved_session_ids: summary_ids("sessionId"),
+            active_session_ids: summary_ids("activeSessionId"),
+        };
+        owners
+            .saved_session_ids
+            .extend(Some(self.session_id.as_str()).filter(|id| !id.is_empty()));
+        owners
+            .active_session_ids
+            .extend(Some(self.active_session_id.as_str()).filter(|id| !id.is_empty()));
+        ScopedRuns::of(&self.environment_runs, &owners)
     }
 
     /// Fire a background refresh of the run list (`controls`). At most one
@@ -63,7 +82,7 @@ impl SessionUi {
                     id: None,
                     active_session_id,
                     operation: "controls".into(),
-                    parameters: json!({}),
+                    parameters: json!({"include_ended": true}),
                     rest: Map::default(),
                 }),
             )
@@ -74,21 +93,29 @@ impl SessionUi {
                 Ok(Err(error)) => Err(format!("{error:#}")),
                 Err(_) => Err("timed out waiting for the Prime Env daemon response".to_owned()),
             };
-            let _ = updates.send(EnvironmentRunsUpdate { runs });
+            let _ = updates.send(EnvironmentRunsUpdate::Runs(runs));
         });
     }
 
-    /// Fold a landed refresh in: the dock follows it with the panel closed,
-    /// an open panel keeps its selection, and a failure surfaces only inside
-    /// the open panel.
+    /// Fold a landed fetch in. A run list: the dock follows it with the
+    /// panel closed, an open panel keeps its selection, and a failure
+    /// surfaces only inside the open panel. A transcript: shown when its run
+    /// is still the one loading.
     pub(crate) fn apply_environment_runs_update(
         &mut self,
         update: EnvironmentRunsUpdate,
         view: &mut AgentView,
     ) {
+        let runs = match update {
+            EnvironmentRunsUpdate::Runs(runs) => runs,
+            EnvironmentRunsUpdate::Transcript { id, messages } => {
+                self.apply_environment_run_transcript(&id, messages, view);
+                return;
+            }
+        };
         self.environment_refresh_in_flight = false;
         let queued = std::mem::take(&mut self.environment_refresh_queued);
-        match update.runs {
+        match runs {
             Ok(runs) => {
                 self.environment_runs = runs;
                 let scoped = self.scoped_environment_runs();
@@ -164,6 +191,10 @@ impl SessionUi {
                     self.focus_activity_dock(view);
                 }
                 self.dirty = true;
+            }
+            Some(EnvironmentRunsAction::View(run)) => {
+                view.environment_runs_view = None;
+                self.open_environment_run_transcript(run, view);
             }
             Some(EnvironmentRunsAction::Stop(run)) => {
                 match self

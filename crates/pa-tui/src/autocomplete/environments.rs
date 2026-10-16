@@ -3,7 +3,9 @@ use super::{
     apply_file_completion, get_slash_command_context, AutocompleteProvider, CompletionItem,
     CompletionResult, SlashKind, SuggestionKind, SuggestionLookup, Suggestions,
 };
-use pa_types::environments::{ActionDescriptor, Definition, Instance, InstanceRun, RoleName};
+use pa_types::environments::{
+    ActionDescriptor, Definition, Instance, InstanceRun, RoleName, RunPhase,
+};
 use serde_json::{json, Value};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -33,7 +35,11 @@ const COMMANDS: &[Command] = &[
     Command { name: "resume_run", arguments: "", description: "Resume a paused run", example: "resume_run", participant: true },
     Command { name: "stop", arguments: "[instance-id]", description: "Stop this table permanently, or an instance from the builder", example: "stop", participant: true },
     Command { name: "runs", arguments: "", description: "List persisted environment runs", example: "runs", participant: false },
+    Command { name: "act_for", arguments: "<instance-id> <seat> <action> [JSON]", description: "Take a stuck agent seat's turn for it", example: "act_for instance-id player-2 pass {}", participant: false },
+    Command { name: "suspend", arguments: "<instance-id> <seat> [reason]", description: "Take an agent seat out of play until resumed", example: "suspend instance-id player-2 keeps calling unavailable actions", participant: false },
+    Command { name: "resume_seat", arguments: "<instance-id> <seat>", description: "Return a suspended seat to play", example: "resume_seat instance-id player-2", participant: false },
     Command { name: "watch", arguments: "<instance>", description: "Watch a public agents-only table", example: "watch instance-id", participant: false },
+    Command { name: "view", arguments: "[public] | <instance>", description: "Open the environment's live viewer in your browser", example: "view", participant: true },
     Command { name: "list", arguments: "", description: "List saved environment IDs and names", example: "list", participant: false },
     Command { name: "catalog", arguments: "", description: "Show the detailed saved environment catalog", example: "catalog", participant: false },
     Command { name: "create", arguments: "<description>", description: "Build a new environment draft", example: "create a small card game", participant: false },
@@ -143,8 +149,9 @@ pub(crate) fn instance_items(instances: &[Instance]) -> Vec<CompletionItem> {
         .collect()
 }
 
-/// Builder picker for `/env pause` and `/env stop`: only runs the operation can
-/// still affect. A paused or stalled run is idle already and can only be stopped.
+/// Builder picker for `/env pause`, `/env stop`, and the seat interventions: only
+/// runs the operation can still affect. A paused or stalled run is idle already and
+/// can only be stopped, or have its seats intervened in.
 pub(crate) fn run_items(runs: &[InstanceRun]) -> Vec<CompletionItem> {
     let describe = |run: &InstanceRun, operation: &str| CompletionItem {
         value: format!("{operation} {}", run.instance.id),
@@ -159,10 +166,18 @@ pub(crate) fn run_items(runs: &[InstanceRun]) -> Vec<CompletionItem> {
         argument_hint: None,
         source_tag: None,
     };
+    // Ended runs take no control.
     let pausable = runs.iter().filter(|run| run.phase.is_pausable());
+    let stoppable = runs.iter().filter(|run| !run.phase.is_terminal());
+    let open = stoppable
+        .clone()
+        .filter(|run| run.phase != RunPhase::NeedsRecovery);
     pausable
         .map(|run| describe(run, "pause"))
-        .chain(runs.iter().map(|run| describe(run, "stop")))
+        .chain(stoppable.map(|run| describe(run, "stop")))
+        .chain(open.flat_map(|run| {
+            ["act_for", "suspend", "resume_seat"].map(|operation| describe(run, operation))
+        }))
         .collect()
 }
 
@@ -243,7 +258,11 @@ pub(crate) fn suggestions(
         .unwrap_or((trimmed, ""));
     let items: Vec<CompletionItem> =
         if (matches!(operation, "act" | "enter" | "resume" | "msg" | "watch")
-            || (mode == Mode::Builder && matches!(operation, "pause" | "stop")))
+            || (mode == Mode::Builder
+                && matches!(
+                    operation,
+                    "pause" | "stop" | "act_for" | "suspend" | "resume_seat"
+                )))
             && trimmed.contains(char::is_whitespace)
         {
             if rest.trim_start().contains(char::is_whitespace) {
@@ -547,10 +566,11 @@ mod tests {
     }
 
     #[test]
-    fn pause_and_stop_list_only_the_runs_they_can_affect() {
+    fn run_controls_list_only_the_runs_they_can_affect() {
         let runs: Vec<InstanceRun> = serde_json::from_value(json!([
             {"instance":{"id":"live","definition_id":"cards","version":"v1","policy":{"backend":"local"}},"phase":"running","reason":null},
-            {"instance":{"id":"idle","definition_id":"counter","version":"v1","policy":{"backend":"local"}},"phase":"paused","reason":"human detached"}
+            {"instance":{"id":"idle","definition_id":"counter","version":"v1","policy":{"backend":"local"}},"phase":"paused","reason":"human detached"},
+            {"instance":{"id":"ended","definition_id":"counter","version":"v1","policy":{"backend":"local"}},"phase":"stopped","reason":"human requested stop"}
         ])).unwrap();
         let items = run_items(&runs);
         let mut provider =
@@ -585,7 +605,29 @@ mod tests {
                     "counter — idle",
                     Some("paused · human detached")
                 ),
+                ("act_for live", "cards — live", Some("running")),
+                ("suspend live", "cards — live", Some("running")),
+                ("resume_seat live", "cards — live", Some("running")),
+                (
+                    "act_for idle",
+                    "counter — idle",
+                    Some("paused · human detached")
+                ),
+                (
+                    "suspend idle",
+                    "counter — idle",
+                    Some("paused · human detached")
+                ),
+                (
+                    "resume_seat idle",
+                    "counter — idle",
+                    Some("paused · human detached")
+                ),
             ]
+        );
+        assert_eq!(
+            lookup(&provider, "/env suspend ").items,
+            vec![items[4].clone(), items[7].clone()]
         );
     }
 

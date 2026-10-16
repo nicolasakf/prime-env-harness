@@ -2,6 +2,7 @@
 mod events;
 mod form;
 mod runs;
+mod transcript;
 use super::{AgentView, DaemonCommand, Duration, Map, Result, SessionUi, SubmitBehavior, Value};
 use crate::autocomplete::environments::{self, Mode};
 pub(crate) use runs::EnvironmentRunsUpdate;
@@ -85,6 +86,9 @@ impl SessionUi {
         );
         parameters["ui_origin"] = json!(origin);
         self.environment_pending = Some(origin.clone());
+        if self.environment_profile.is_none() && matches!(operation, "enter" | "resume" | "watch") {
+            self.environment_return_session = Some(self.active_session_id.clone());
+        }
         self.track_feature_outcome("environment", "initiated", None);
         let client = self.client.clone();
         let active_session_id = self.active_session_id.clone();
@@ -121,7 +125,9 @@ impl SessionUi {
     /// Run phases change without the builder prompt being told, so the pause
     /// and stop pickers refetch them each time they open.
     pub(super) async fn refresh_environment_runs(&mut self) -> Result<()> {
-        let result = self.environment_request("controls", json!({})).await?;
+        let result = self
+            .environment_request("controls", json!({"include_ended": true}))
+            .await?;
         self.environment_runs = serde_json::from_value(result["runs"].clone())?;
         Ok(())
     }
@@ -204,6 +210,7 @@ impl SessionUi {
                     | "resume_run"
                     | "stop"
                     | "resume"
+                    | "view"
             )
         {
             anyhow::bail!("Leave the environment before using builder commands.");
@@ -372,9 +379,58 @@ impl SessionUi {
                 }
                 result
             }
+            "act_for" | "suspend" | "resume_seat" => {
+                let (seat, detail) = detail
+                    .trim()
+                    .split_once(char::is_whitespace)
+                    .unwrap_or((detail.trim(), ""));
+                if selector.is_empty() || seat.is_empty() {
+                    anyhow::bail!("{}", environments::help(operation, mode));
+                }
+                let (wire, parameters) = match operation {
+                    "act_for" => {
+                        let (action, arguments) = detail
+                            .trim()
+                            .split_once(char::is_whitespace)
+                            .unwrap_or((detail.trim(), ""));
+                        if action.is_empty() {
+                            anyhow::bail!("{}", environments::help(operation, mode));
+                        }
+                        let arguments: Value = if arguments.trim().is_empty() {
+                            json!({})
+                        } else {
+                            serde_json::from_str(arguments)?
+                        };
+                        ("act_for_seat", json!({"id":selector,"seat":seat,"action":action,"arguments":arguments,"reason":"the user took this turn from the builder prompt"}))
+                    }
+                    "suspend" => {
+                        let reason = if detail.trim().is_empty() { "the user suspended this seat from the builder prompt" } else { detail.trim() };
+                        ("suspend_seat", json!({"id":selector,"seat":seat,"reason":reason}))
+                    }
+                    "resume_seat" => ("resume_seat", json!({"id":selector,"seat":seat})),
+                    _ => unreachable!("matched seat interventions"),
+                };
+                let result = self.environment_request(wire, parameters).await?;
+                self.spawn_environment_runs_refresh();
+                result
+            }
             "msg" => self.environment_request("msg", json!({"to":selector,"text":detail,"operation_id":format!("human-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos())})).await?,
             "runs" => self.environment_request("instances", json!({})).await?,
             "watch" => { self.queue_environment_request("watch", json!({"id":selector}), view)?; return Ok(()); }
+            "view" => {
+                let parameters = if self.environment_profile.is_some() {
+                    if selector == "public" { json!({"perspective":{"kind":"public"}}) } else { json!({}) }
+                } else if selector.is_empty() {
+                    anyhow::bail!("usage: /env view <instance-id>");
+                } else {
+                    json!({"id":selector})
+                };
+                let result = self.environment_request("view", parameters).await?;
+                let url = result["url"].as_str().ok_or_else(|| anyhow::anyhow!("live view returned no address"))?;
+                crate::browser::open_in_browser(url);
+                self.note(&format!("Live view opened in your browser: {url}"), view);
+                return Ok(());
+            }
             "resume" => {
                 self.queue_environment_request("resume", json!({"id":selector}), view)?;
                 return Ok(());
@@ -413,7 +469,7 @@ impl SessionUi {
                 return Ok(());
             }
             _ => anyhow::bail!(
-                "usage: /env [list|catalog|create|inspect|policy|validate|save|enter|resume|pause|stop|act|status|leave]"
+                "usage: /env [list|catalog|create|inspect|policy|validate|save|enter|resume|pause|stop|act_for|suspend|resume_seat|act|status|view|leave]"
             ),
         };
         self.plain_row(&serde_json::to_string_pretty(&result)?, view);

@@ -10,28 +10,47 @@ use serde_json::Value;
 
 use crate::theme::{Theme, ThemeBg, ThemeColor};
 
-/// The compact 7-row brand butterfly (TS `PRIME_COMPACT_BUTTERFLY_LOGO`).
-pub const PRIME_COMPACT_BUTTERFLY_LOGO: &str = concat!(
-    "                 \u{2597}\u{2584}\u{2584}\u{2588}\u{2580}\n",
-    "   \u{2588}\u{2588}\u{2588}\u{2584}       \u{2597}\u{2584}\u{2588}\u{2588}\u{2588}\u{2580}\n",
-    "  \u{2597}\u{2588}\u{259b}\u{2590}\u{2588}\u{2599}   \u{2597}\u{2584}\u{2588}\u{2580}\u{2597}\u{2588}\u{2580}\n",
-    " \u{2597}\u{2588}\u{259b} \u{259f}\u{2588}\u{2588}\u{2599}\u{2584}\u{2588}\u{2588}\u{259b} \u{259f}\u{259b}\n",
-    " \u{2597}\u{259f}\u{258c} \u{2590}\u{2588}\u{2588}\u{2588}\u{259b}\u{2598}\u{2597}\u{2584}\u{2588}\u{2596}\n",
-    "\u{259f}\u{2588}\u{2588}\u{2588}\u{2584}  \u{2584}\u{2584}\u{259f}\u{2588}\u{2588}\u{2588}\u{2580}\n",
-    "\u{259c}\u{2588}\u{259b}\u{2580}\u{2598}  \u{259c}\u{2588}\u{259b}\u{2580}\u{2598}",
-);
-
-/// Theme tone for each logo row, top to bottom: a sky-to-violet-to-amber
-/// gradient built from theme tokens so every theme recolors it.
-pub(crate) const LOGO_ROW_TONES: [ThemeColor; 7] = [
-    ThemeColor::MdLink,
-    ThemeColor::MdLink,
-    ThemeColor::Accent,
-    ThemeColor::Accent,
-    ThemeColor::Warning,
-    ThemeColor::Warning,
-    ThemeColor::Warning,
+/// The 7-row brand butterfly (TS `PRIME_COMPACT_BUTTERFLY_LOGO`), 22 columns.
+const BUTTERFLY: [&str; 7] = [
+    "                 ▗▄▄█▀",
+    "   ███▄       ▗▄███▀",
+    "  ▗█▛▐█▙   ▗▄█▀▗█▀",
+    " ▗█▛ ▟██▙▄██▛ ▟▛",
+    " ▗▟▌ ▐███▛▘▗▄█▖",
+    "▟███▄  ▄▄▟███▀",
+    "▜█▛▀▘  ▜█▛▀▘",
 ];
+
+/// Tones of the stacked butterfly layers, front to back: the front copy in
+/// the text tone, each copy behind it one step closer to the background.
+const LOGO_LAYER_TONES: [ThemeColor; 4] = [
+    ThemeColor::Text,
+    ThemeColor::Muted,
+    ThemeColor::Dim,
+    ThemeColor::BorderMuted,
+];
+
+/// Rows and columns of the logo: the butterfly plus one column per layer
+/// behind it.
+pub(crate) const LOGO_ROWS: usize = BUTTERFLY.len();
+pub(crate) const LOGO_COLS: usize = 22 + LOGO_LAYER_TONES.len() - 1;
+
+/// The logo as themed cells: copies of the butterfly stacked one column
+/// apart, fading from the text tone at the front toward the background.
+/// Back layers are drawn first so each nearer copy covers the one behind.
+pub(crate) fn logo_cells() -> Vec<Vec<(char, ThemeColor)>> {
+    let mut grid = vec![vec![(' ', ThemeColor::Text); LOGO_COLS]; LOGO_ROWS];
+    for (depth, tone) in LOGO_LAYER_TONES.iter().enumerate().rev() {
+        for (row, line) in BUTTERFLY.iter().enumerate() {
+            for (col, ch) in line.chars().enumerate() {
+                if ch != ' ' {
+                    grid[row][col + depth] = (ch, *tone);
+                }
+            }
+        }
+    }
+    grid
+}
 
 /// Truncate a plain string to a visible width (TS `truncateToWidth` for
 /// plain strings: cut on grapheme boundaries, appending the ellipsis).
@@ -359,12 +378,11 @@ pub fn render_splash(state: &ChromeState, theme: &Theme, width: usize) -> Vec<Li
     let safe_width = width.max(1);
     let padding_x = usize::from(safe_width > 1);
     let content_width = safe_width.saturating_sub(padding_x * 2).max(1);
-    let logo_raw: Vec<&str> = PRIME_COMPACT_BUTTERFLY_LOGO.split('\n').collect();
-    let logo_canvas_width = logo_raw
-        .iter()
-        .map(|line| str_width(line))
-        .max()
-        .unwrap_or(0);
+    let logo = logo_cells();
+    // The logo sits a little in from the pane edge; the gutter separates it
+    // from the metadata.
+    let logo_indent = 3usize;
+    let logo_canvas_width = logo_indent + LOGO_COLS;
     let gutter = 3usize;
     let show_logo =
         logo_canvas_width > 0 && content_width.saturating_sub(logo_canvas_width + gutter) >= 24;
@@ -425,7 +443,7 @@ pub fn render_splash(state: &ChromeState, theme: &Theme, width: usize) -> Vec<Li
     }
 
     let mut lines: Vec<Line> = vec![Vec::new()];
-    let row_count = logo_raw.len().max(meta_lines.len());
+    let row_count = logo.len().max(meta_lines.len());
     let meta_start = if show_logo {
         (row_count - meta_lines.len()) / 2
     } else {
@@ -436,11 +454,21 @@ pub fn render_splash(state: &ChromeState, theme: &Theme, width: usize) -> Vec<Li
         let pad = if padding_x > 0 { " " } else { "" };
         spans.push(Span::styled(pad.to_string(), Style::default()));
         if show_logo {
-            let logo_line = logo_raw.get(index).copied().unwrap_or("");
-            let tone = LOGO_ROW_TONES[index.min(LOGO_ROW_TONES.len() - 1)];
-            spans.push(Span::styled(logo_line.to_string(), theme.fg_style(tone)));
-            let fill = logo_canvas_width.saturating_sub(str_width(logo_line)) + gutter;
-            spans.push(Span::styled(" ".repeat(fill), Style::default()));
+            spans.push(Span::styled(" ".repeat(logo_indent), Style::default()));
+            let mut run = String::new();
+            let mut run_tone = ThemeColor::Text;
+            for &(ch, tone) in logo.get(index).map_or(&[][..], Vec::as_slice) {
+                if tone != run_tone && !run.is_empty() {
+                    spans.push(Span::styled(
+                        std::mem::take(&mut run),
+                        theme.fg_style(run_tone),
+                    ));
+                }
+                run_tone = tone;
+                run.push(ch);
+            }
+            spans.push(Span::styled(run, theme.fg_style(run_tone)));
+            spans.push(Span::styled(" ".repeat(gutter), Style::default()));
         }
         let meta_index = index as isize - meta_start as isize;
         if meta_index >= 0 {

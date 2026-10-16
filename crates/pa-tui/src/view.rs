@@ -131,6 +131,11 @@ pub struct AgentView {
     /// The Environments dock group's panel: while set, it owns the editor
     /// dock like the other dock-group views.
     pub(crate) environment_runs_view: Option<crate::environment_runs_view::EnvironmentRunsView>,
+    /// An ended environment run's read-only transcript: while set, the
+    /// chat shows that run's saved conversation and the banner replaces
+    /// the editor, so the builder session's own events wait for the close.
+    pub(crate) environment_run_transcript:
+        Option<crate::environment_run_transcript::EnvironmentRunTranscript>,
     /// A `/share` gist upload in flight (TS `BorderedLoader`): while set,
     /// it replaces the editor with the cancellable loader rows.
     pub share_loader: Option<ShareLoader>,
@@ -370,6 +375,7 @@ impl AgentView {
             goal_panel: None,
             bash_view: None,
             environment_runs_view: None,
+            environment_run_transcript: None,
             share_loader: None,
             reload_box: None,
             side_pane: None,

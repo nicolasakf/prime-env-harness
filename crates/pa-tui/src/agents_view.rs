@@ -336,7 +336,7 @@ enum UiInput {
         key: String,
         outcome: Result<(), String>,
     },
-    /// The live environment runs landed (or failed to): the Environments
+    /// The environment runs landed (or failed to): the Environments
     /// column counts them per session.
     EnvironmentRuns {
         runs: Result<Vec<pa_types::environments::InstanceRun>, String>,
@@ -405,7 +405,7 @@ struct AgentsViewMode {
     theme: Theme,
     roster: Vec<Value>,
     saved: Vec<Value>,
-    /// The live environment runs the Environments column tallies per
+    /// The environment runs the Environments column tallies per
     /// provisioning session.
     environment_runs: Vec<pa_types::environments::InstanceRun>,
     environment_feed: EnvironmentRunsFeed,

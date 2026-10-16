@@ -282,7 +282,14 @@ impl SessionUi {
                 event,
                 meta_sequence,
             } => {
-                if active_session_id != self.active_session_id {
+                // An ended run's transcript holds the chat: the session's
+                // own events wait for the close, whose re-attach replays
+                // the session from its snapshot.
+                if active_session_id != self.active_session_id
+                    || view.environment_run_transcript.as_ref().is_some_and(
+                        crate::environment_run_transcript::EnvironmentRunTranscript::is_shown,
+                    )
+                {
                     return;
                 }
                 // The live event-sequence tracker (`view::handoff`): the
@@ -299,6 +306,16 @@ impl SessionUi {
                     && event["message"]["customType"] == "environment_private"
                 {
                     self.track_feature_outcome("environment_private_response", "completed", None);
+                }
+                if event["type"] == "idle_notification" {
+                    let outcome = match crate::desktop_notification::post(
+                        event["title"].as_str().unwrap_or_default(),
+                        event["body"].as_str().unwrap_or_default(),
+                    ) {
+                        Ok(()) => "completed",
+                        Err(_) => "failed",
+                    };
+                    self.track_feature_outcome("idle_notification", outcome, None);
                 }
                 self.apply_environment_event(&event, view);
                 if let Some(update) = event_to_update(&event) {

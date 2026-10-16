@@ -1,6 +1,19 @@
 //! Apply public host status and environment request results.
 use super::{AgentView, SessionUi, Value};
 
+/// The session the pane moves to once an environment operation is ready:
+/// the table it opened, or after a leave the builder the table was opened
+/// from in this TUI (`return_session`), falling back to the builder the run
+/// saved, whose id may be from before that session last reopened.
+fn rebind_target(data: &Value, return_session: Option<String>) -> Option<String> {
+    data["session"]["activeSessionId"]
+        .as_str()
+        .or_else(|| data["session"]["session"]["activeSessionId"].as_str())
+        .map(str::to_owned)
+        .or(return_session)
+        .or_else(|| data["builder_session_id"].as_str().map(str::to_owned))
+}
+
 impl SessionUi {
     pub(crate) fn apply_environment_event(&mut self, event: &Value, view: &mut AgentView) {
         if event["type"] == "environment_status" || event["type"] == "environment_seat_state" {
@@ -67,11 +80,12 @@ impl SessionUi {
                     None,
                 );
                 if event["phase"] == "ready" {
-                    self.pending_rebind = event["data"]["session"]["activeSessionId"]
-                        .as_str()
-                        .or_else(|| event["data"]["session"]["session"]["activeSessionId"].as_str())
-                        .or_else(|| event["data"]["builder_session_id"].as_str())
-                        .map(str::to_owned);
+                    let return_session = if event["operation"] == "leave" {
+                        self.environment_return_session.take()
+                    } else {
+                        None
+                    };
+                    self.pending_rebind = rebind_target(&event["data"], return_session);
                     self.plain_row(
                         &serde_json::to_string_pretty(&event["data"])
                             .unwrap_or_else(|_| event["data"].to_string()),
@@ -100,5 +114,31 @@ impl SessionUi {
                 view,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rebind_target;
+    use serde_json::json;
+
+    /// Entering opens the table; leaving returns to the builder the table
+    /// was opened from, not the stale builder id the run saved, which is
+    /// only the fallback.
+    #[test]
+    fn leave_returns_to_the_session_the_table_was_opened_from() {
+        assert_eq!(
+            rebind_target(&json!({"session": {"activeSessionId": "table"}}), None),
+            Some("table".to_owned())
+        );
+        let left = json!({"builder_session_id": "before-restart"});
+        assert_eq!(
+            rebind_target(&left, Some("builder-now".to_owned())),
+            Some("builder-now".to_owned())
+        );
+        assert_eq!(
+            rebind_target(&left, None),
+            Some("before-restart".to_owned())
+        );
     }
 }

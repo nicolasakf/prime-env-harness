@@ -1,6 +1,6 @@
-//! The Environments column's data feed: the live environment runs, fetched
-//! over the roster connection and re-fetched whenever the daemon announces
-//! a run opened or changed phase.
+//! The Environments column's data feed: every environment run, live and
+//! ended, fetched over the roster connection and re-fetched whenever the
+//! daemon announces a run opened or changed phase.
 use std::time::Duration;
 
 use pa_types::daemon::DaemonCommand;
@@ -27,8 +27,8 @@ pub(super) struct EnvironmentRunsFeed {
 }
 
 impl AgentsViewMode {
-    /// Fetch the live runs, or queue the fetch behind the one in flight. The
-    /// daemon lists every live run whichever session answers, so the
+    /// Fetch the runs, or queue the fetch behind the one in flight. The
+    /// daemon lists every run whichever session answers, so the
     /// request rides a live session that is not itself an environment host
     /// or seat; with none on the roster yet the fetch waits for the next
     /// roster push.
@@ -70,7 +70,7 @@ impl AgentsViewMode {
                     id: None,
                     active_session_id,
                     operation: "controls".into(),
-                    parameters: json!({}),
+                    parameters: json!({"include_ended": true}),
                     rest: serde_json::Map::default(),
                 }),
             )

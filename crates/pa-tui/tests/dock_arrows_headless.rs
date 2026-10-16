@@ -368,9 +368,9 @@ fn run_plan(
 /// The panel-exit ruling (2026-09-26) keeps the dock focused on the
 /// closed section's own item, so the walk needs no re-grab press
 /// between the sections. Left from the subagents section no longer
-/// wraps to the row's last section (the operator's 2026-09-28 ask): it
-/// opens the scoped agents view — the run hands the pane to the agents
-/// surface and ends (the pure `step` tests keep pinning the wrap).
+/// wraps to the row's last section: it goes back a level like left from
+/// the prompt — the run hands the pane to the agents surface and ends
+/// (the pure `step` tests keep pinning the wrap).
 #[test]
 fn dock_arrows_visit_each_empty_section_in_order_both_directions() {
     let steps = vec![
@@ -433,9 +433,9 @@ fn dock_arrows_visit_each_empty_section_in_order_both_directions() {
         HeadlessStep::Key(left()),
         HeadlessStep::WaitMs(100),
         // Left from the subagents selection no longer wraps to the
-        // row's last section: it opens the scoped agents view (the
-        // operator's 2026-09-28 ask), the run hands the pane to the
-        // agents surface, and the plan ends there.
+        // row's last section: it goes back a level like left from the
+        // prompt, the run hands the pane to the agents surface, and
+        // the plan ends there.
         HeadlessStep::Key(left()),
         HeadlessStep::WaitMs(300),
     ];
@@ -544,18 +544,13 @@ fn dock_arrows_visit_the_same_sections_when_one_has_rows() {
     assert!(!outcome.return_to_agents_view);
 }
 
-/// Left from the subagents selection opens the agents view (the
-/// operator's 2026-09-28 ask, reported as "right now nothing
-/// happens"): with the dock focused and the selection on the subagents
-/// section — its landing spot — one left press takes the same route as
-/// Enter and clicking the group (the scoped agents view handoff), so
-/// the pane leaves the session for the agents surface. The TS dock has
-/// no left/right handling at all (`subagent-summary-line.ts` handles
-/// confirm/cancel only), so this is the documented Rust divergence;
-/// the editor's `agents back` (left on an empty draft) is the same
-/// muscle-memory rule on the adjacent surface.
+/// Left from the subagents selection goes back a level, exactly like
+/// left from the prompt (`app.agents.back`): the dock releases its
+/// focus and the key takes the editor's agents-back route instead of
+/// drilling into the group's view (that is Enter's job), so the pane
+/// leaves the session for the agents surface.
 #[test]
-fn left_from_the_subagents_selection_opens_the_agents_view() {
+fn left_from_the_subagents_selection_goes_back_like_the_prompt() {
     let steps = vec![
         // The goal row adds the goal section; the other three sections
         // render their zero counts.

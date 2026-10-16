@@ -121,6 +121,10 @@ impl AgentView {
             let mut dock = prompt_context;
             dock.extend(runs_view.render(&self.theme, width, self.editor.keybindings()));
             Some(dock)
+        } else if let Some(transcript) = self.environment_run_transcript.as_ref() {
+            let mut dock = prompt_context;
+            dock.extend(transcript.render(&self.theme, width, self.editor.keybindings()));
+            Some(dock)
         } else if let Some(panel) = self.info_panel.as_mut() {
             let mut dock = prompt_context;
             dock.extend(panel.render(
@@ -345,6 +349,7 @@ impl AgentView {
             || self.goal_panel.is_some()
             || self.bash_view.is_some()
             || self.environment_runs_view.is_some()
+            || self.environment_run_transcript.is_some()
             || self.info_panel.is_some()
             || self.tree_selector.is_some()
             || self.fork_selector.is_some()
