@@ -1,7 +1,8 @@
 # Examples
 
 Two complete environments, each with behavioral checks, a suggested execution
-policy, and a notebook report template.
+policy, and a notebook report template. Hold'em also ships an optional replay
+viewer.
 
 | Directory | Seats | What it is |
 | --- | --- | --- |
@@ -19,7 +20,7 @@ python3 scripts/install_examples.py texas-holdem
 
 Add `--data-dir <directory>` if you launch Prime Env with a custom data
 directory. The script copies each example into a fresh builder draft, installs its
-report template, and prints the commands to finish. It does not run or save
+report template and any viewer, and prints the commands to finish. It does not run or save
 anything. Then, in Prime Env:
 
 ```text
@@ -41,6 +42,17 @@ charts and tables. The Hold'em template was verified on the version shipped here
 The market template was verified on an earlier version that differs only in the
 acknowledgment returned by `say`, and is marked compatible with the shipped
 version without a separate run.
+
+## Viewer
+
+`texas-holdem/viewer/` draws the table: seats, cards, bets, the board, each
+hand's showdown, a hand log, and stacks by hand, with hand-by-hand chapter marks.
+It replays an ended run with every card face up ("show me a replay of that run"),
+and follows a running one live with `/env view`: at the table you see your own
+cards and everyone else's face down, and `/env view public` hides them all. Only
+runs recorded with snapshot history can be replayed.
+Viewers are optional; other environments have none unless you ask the builder
+for one.
 
 ## Design notes
 

@@ -3,7 +3,7 @@
   "name": "Texas Hold\u2019em",
   "purpose": "Fixed-hand no-limit Texas Hold\u2019em with play chips, private cards, and no table communication.",
   "language": "python",
-  "instructions": "Play no-limit Texas Hold\u2019em using play chips only. Use the configured hands, starting_chips, small_blind and big_blind. Seats follow roster order; the button moves to the next funded seat each hand. Heads-up the button posts the small blind and acts first preflop, last postflop. Blinds stay fixed. No rebuys; busted seats sit out. Finish after hands or when fewer than two funded seats remain; final stacks rank players and equal stacks tie.\nOnly the seat named in turn may act. Submit one legal poker action per wake. raise_to.amount means your TOTAL contribution on this betting street, not an added raise. Observe legal_actions for call cost and raise bounds. Short all-ins do not reopen raising until the cumulative increase faced reaches a full raise. Uncalled excess is returned; side pots and tied pots are settled separately. Odd chips go clockwise from the button. At showdown all nonfolded hands are revealed; folded hands never become public. No talk: say is rejected and direct messages are disabled. Replies and thinking are private and do not take a turn. Do not infer hidden cards or a hidden future deck from engine internals. Current views include public opponent statistics and recent hand summaries; there is no memory of your earlier model reasoning.",
+  "instructions": "Play no-limit Texas Hold\u2019em using play chips only. Use the configured hands, starting_chips, small_blind and big_blind. Seats follow roster order; the button moves to the next funded seat each hand. Heads-up the button posts the small blind and acts first preflop, last postflop. Blinds stay fixed. No rebuys; busted seats sit out. Finish after hands or when fewer than two funded seats remain; final stacks rank players and equal stacks tie.\nOnly the seat named in turn may act. Submit one legal poker action per wake. raise_to.amount means your TOTAL contribution on this betting street, not an added raise. Observe legal_actions for call cost and raise bounds. Short all-ins do not reopen raising until the cumulative increase faced reaches a full raise. Uncalled excess is returned; side pots and tied pots are settled separately. Odd chips go clockwise from the button. At showdown all nonfolded hands are revealed; folded hands never become public. No talk: say is rejected and direct messages are disabled. Replies and thinking are private and do not take a turn. If your turn ends without an action, or runs past the deadline, you get one warning; missing the same turn again folds your hand automatically. Do not infer hidden cards or a hidden future deck from engine internals. Current views include public opponent statistics and recent hand summaries; there is no memory of your earlier model reasoning.",
   "python_execution": false,
   "recommended_backend": "local",
   "roles": [
@@ -59,5 +59,6 @@
       "big_blind"
     ],
     "additionalProperties": false
-  }
+  },
+  "missed_turns": true
 }

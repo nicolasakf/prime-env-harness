@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hold'em replay</title>
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <main class="layout">
+    <section class="stage">
+      <header class="headline">
+        <h1 id="title">Hold'em</h1>
+        <p id="subtitle"></p>
+      </header>
+      <div class="table" id="table">
+        <div class="felt">
+          <div class="center">
+            <div class="street" id="street"></div>
+            <div class="board" id="board"></div>
+            <div class="pot" id="pot"></div>
+          </div>
+        </div>
+        <div id="seats"></div>
+        <div class="result" id="result" hidden></div>
+      </div>
+      <p class="move" id="move" aria-live="polite"></p>
+    </section>
+    <aside class="side">
+      <section>
+        <h2>This hand</h2>
+        <ol class="log" id="log"></ol>
+      </section>
+      <section>
+        <h2>Stacks by hand</h2>
+        <div id="chart"></div>
+      </section>
+      <section>
+        <h2>Players</h2>
+        <table class="stats" id="stats"></table>
+      </section>
+    </aside>
+  </main>
+  <script src="viewer.js"></script>
+</body>
+</html>

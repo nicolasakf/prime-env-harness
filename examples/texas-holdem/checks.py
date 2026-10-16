@@ -116,6 +116,13 @@ def check_rosters_and_privacy():
                 assert not {"hole", "hole_cards", "deck"}.intersection(player)
             assert "deck" not in view
             assert "state" not in view
+            frame = game.frame({"kind": "seat", "seat": seat})
+            assert not {"deck", "decks"}.intersection(frame)
+            assert {s: p["hole"] for s, p in frame["players"].items()} == {
+                s: p["hole"] if s == seat else ["??", "??"] for s, p in game.state["players"].items()}
+        public = game.frame({"kind": "public"})
+        assert all(p["hole"] == ["??", "??"] for p in public["players"].values())
+        assert json.loads(json.dumps(public)) == public
         finish_passively(game)
         assert len(game.state["board"]) == 5
         assert len(game.state["results"]) == 1
@@ -333,6 +340,46 @@ def check_restore_and_hand_limit():
     rejected(finished, "p0", "fold")
 
 
+def check_missed_turns():
+    game = new_game(3)
+    seat = game.state["turn"]
+    before = json.loads(json.dumps(game.snapshot()))
+    # A seat that is not on turn has nothing to miss.
+    other = next(s for s in game.state["seats"] if s != seat)
+    sdk._begin_request("missed_turn")
+    assert game.missed_turn(other, {"cause": "idle", "misses": 2, "limit": 2}) == {}
+    assert sdk._response_metadata() == {}
+    # The first miss warns the seat privately and changes nothing else.
+    for cause, wording in [("idle", "ended without"), ("deadline", "turn deadline")]:
+        sdk._begin_request("missed_turn")
+        assert game.missed_turn(seat, {"cause": cause, "misses": 1, "limit": 2}) == {"warned": True}
+        [notice] = sdk._response_metadata()["notices"]
+        assert notice["to"] == [seat] and notice["wake"] and notice["actionable"], notice
+        assert wording in notice["message"] and "folded automatically" in notice["message"], notice
+        assert game.snapshot() == before
+    # The second miss folds the hand, publicly, and play moves on.
+    result = committed(game, "missed_turn", seat, {"cause": "deadline", "misses": 2, "limit": 2})
+    assert result["auto_folded"] and result["action"]["action"] == "fold", result
+    assert result["action"]["automatic"] is True
+    assert game.state["players"][seat]["folded"]
+    assert game.state["stats"][seat]["folds"] == 1
+    assert game.state["turn"] not in (None, seat)
+    assert game.state["history"][-1] == result["action"]
+    assert game.state["revision"] == before["revision"] + 1
+    # With no re-prompts granted, the first miss already folds.
+    strict = new_game(3)
+    seat = strict.state["turn"]
+    assert committed(strict, "missed_turn", seat, {"cause": "idle", "misses": 1, "limit": 0})["auto_folded"]
+    assert strict.state["players"][seat]["folded"]
+    # Heads-up, the auto-fold ends the hand and the next one starts.
+    duel = new_game(2, hands=2)
+    seat = duel.state["turn"]
+    committed(duel, "missed_turn", seat, {"cause": "idle", "misses": 2, "limit": 2})
+    assert duel.state["hand_number"] == 2
+    assert duel.state["results"][0]["history"][-1]["automatic"] is True
+    assert duel.state["results"][0]["chip_changes"][seat] < 0
+
+
 evaluator_checks()
 check_rosters_and_privacy()
 check_heads_up_and_invalid()
@@ -343,4 +390,5 @@ check_fold_and_odd_chip()
 check_short_big_blind()
 check_seeded_play()
 check_restore_and_hand_limit()
+check_missed_turns()
 print("Holdem behavioral checks passed")

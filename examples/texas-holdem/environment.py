@@ -153,10 +153,40 @@ class Holdem:
                 view["earlier_actions_omitted"] += 1
         return view
 
+    def frame(self, perspective):
+        """What a live viewer draws: the snapshot without the undealt decks, with
+        every hole card masked except the viewing seat's own."""
+        st = deepcopy(self.state)
+        st.pop("decks", None)
+        st.pop("deck", None)
+        viewer = perspective.get("seat") if perspective.get("kind") == "seat" else None
+        for seat, player in st["players"].items():
+            if seat != viewer:
+                player["hole"] = ["??" for _ in player["hole"]]
+        return st
+
     def handle_input(self, seat, text):
         raise ValueError("Table talk is disabled. Use a poker action instead.")
 
     def invoke(self, seat, action, arguments):
+        return self._act(seat, action, arguments)
+
+    def missed_turn(self, seat, report):
+        """A seat's turn ended without an action: warn once, then fold its hand."""
+        if not self._legal(seat):
+            return {}
+        if report["misses"] < 2 and report["misses"] <= report["limit"]:
+            missed = ("You hit the turn deadline without choosing a poker action."
+                      if report["cause"] == "deadline" else
+                      "Your turn ended without a poker action.")
+            notify([seat], f"Warning: {missed} Choose one action from legal_actions now. "
+                   "If you miss this turn again, your hand will be folded automatically.",
+                   actionable=True)
+            return {"warned": True}
+        notify("*", f"{seat} did not act in time; the hand is folded automatically.", wake=False)
+        return {"auto_folded": True, **self._act(seat, "fold", {}, automatic=True)}
+
+    def _act(self, seat, action, arguments, *, automatic=False):
         st = self.state
         legal = self._legal(seat)
         if not legal:
@@ -199,6 +229,8 @@ class Holdem:
         p["acted"], p["last_faced"] = True, st["current_bet"]
         event = {"seat": seat, "phase": st["phase"], "action": action, "paid": paid,
                  "street_total": p["street_paid"]}
+        if automatic:
+            event["automatic"] = True
         st["history"].append(event)
         notify("*", f"{seat}: {action}" + (f" to {p['street_paid']}" if target is not None else f" ({paid} chips)"), wake=False)
         st["revision"] += 1
