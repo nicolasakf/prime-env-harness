@@ -36,10 +36,45 @@ viewer as part of the run without asking:
   run `find <instance>`; if a viewer is `compatible`, run `export <instance>` (reuse
   a `current` export, re-export a `stale` one) and give the HTML path.
 
-This changes nothing else. Do not build, edit, or `add-version` a viewer on the
-strength of a run request, and do not suggest one when none exists. A user who
-asks for no viewer, or to run headless, gets none. Starting a run still follows
-the usual token-use authorization.
+This changes nothing else. A run request is not a reason to build, edit, or
+`add-version` a viewer, and it is not a reason to suggest one when none exists.
+Registering a viewer for a version you just saved is part of that save; see the
+next section. A user who asks for no viewer, or to run headless, gets none.
+Starting a run still follows the usual token-use authorization.
+
+## A new version of an environment that already has a viewer
+
+Saving a new version does not update the viewer. Live view and replay open a
+saved viewer only for versions listed in its `compatible_versions`. When the
+definition you are changing already has one or more saved viewers, the new
+version is not finished until every one of them is **compatible** with that
+version and **registered** for it.
+
+Do this after `save_environment` returns the hash, and before the changelog
+entry:
+
+1. **See which viewers exist.** They live under
+   `<root>/viewers/<definition-id>/`, one folder per viewer. If that directory
+   has no viewer, skip this section. Do not create one because you saved a
+   version.
+2. **Make each viewer compatible.** Compatible means the page draws this version
+   correctly: the fields it reads are still there, masked live frames still
+   render, and chapter boundaries still make sense. Check it on an instance of
+   the new version — `export <instance> --trial` once the run has ended, or
+   `view_instance` while it is running. If the snapshot or `frame` shape changed
+   and the page is wrong, update the page, check it again, and `save-viewer`
+   with `--approved`, passing `--version` for the new hash and for every older
+   hash the updated page still supports. Ask the user before replacing a saved
+   viewer, because the replacement changes every later export and live view.
+3. **Register the version.** When the existing page already draws the new
+   version, run `add-version <definition> <id> --verified-instance <instance>`
+   for each viewer. The instance must be one of this version that you just
+   checked. Registering is part of shipping the version: do it once the check
+   passes, and leave no saved viewer omitting the hash.
+
+`changelog-add` refuses the newest saved version while a viewer omits it. In the
+changelog's Compatibility line, name each viewer and record that it was
+re-checked and now lists this version. If you changed the page, say what changed.
 
 ## What exists
 
@@ -178,7 +213,8 @@ returns a public URL to give the user.
    each step, and chapter marks. Keep it to one short round.
 3. **For live viewing, add `frame(perspective)`** to the environment with checks
    that each perspective hides what it must, then validate and save it. This is
-   a new version.
+   a new version. If a viewer already exists, that version still has to be
+   registered on it, as in the section above.
 4. **Build in a folder**, export with `--source`, open the page in a browser, and
    step through the whole run: the start, rejected moves, chapter boundaries, and
    the final step. Check a phone-width window too. For live viewing, also open a
@@ -186,7 +222,9 @@ returns a public URL to give the user.
 5. **Save** with `save-viewer`, listing every version and instance you checked,
    then run `export <instance>` and give the user the HTML path.
 
-For a run of a version the viewer does not list, try `export --trial`. If it
-replays correctly, ask the user whether to record the version with `add-version`.
+For a version you did not just save, if the viewer does not list it, try
+`export --trial`. If it replays correctly, ask the user whether to record the
+version with `add-version`. A version you just saved is registered once that
+check passes; see "A new version of an environment that already has a viewer".
 Changing a saved viewer changes every later export and live view, so ask the
-user first.
+user before replacing one.

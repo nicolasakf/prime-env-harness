@@ -198,7 +198,10 @@ cut rejected moves. Provide a safe action where the game allows one.
 ## Changing a saved environment
 
 A saved environment changes through new versions, and each version needs a
-changelog entry saying what differs from the one before. Plan the change as an
-environment change: if the cause turns out to be harness behavior, record a
-recommendation instead of working around the harness or editing it. Both rules,
-the tool, and the entry format are in [maintenance](maintenance.md).
+changelog entry saying what differs from the one before. When the environment
+already has a viewer, that viewer must be compatible with the new version and
+registered for it before the changelog; [viewers](viewers.md) has the check and
+the registration step. Plan the change as an environment change: if the cause
+turns out to be harness behavior, record a recommendation instead of working
+around the harness or editing it. Both rules, the tool, and the entry format are
+in [maintenance](maintenance.md).

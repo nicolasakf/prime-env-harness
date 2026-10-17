@@ -11,6 +11,10 @@ A changelog sits beside `definitions/`, never inside a definition or its draft: 
 version is a content hash, so an entry cannot be part of the source it describes,
 and `definitions/<id>/` may hold only version directories.
 
+When the definition has a saved viewer, the newest version cannot be logged until
+every viewer lists it in `compatible_versions`. Older versions can still be
+logged; `versions` and `changelog-show` report the ones a viewer omits.
+
 Commands print JSON. Exit status is non-zero when the request is refused.
 """
 from __future__ import annotations
@@ -59,19 +63,59 @@ def logged_versions(path: Path) -> list[str]:
     return re.findall(r"^Version: ([0-9a-f]{64})$", path.read_text(), re.MULTILINE)
 
 
+def saved_viewers(root: Path, definition: str) -> list[dict]:
+    """Saved viewers for a definition: each id and the versions it lists."""
+    base = root / "viewers" / definition
+    if not base.is_dir():
+        return []
+    viewers = []
+    for directory in sorted(path for path in base.iterdir() if path.is_dir() and not path.name.startswith(".")):
+        meta_path = directory / "viewer.json"
+        if not meta_path.is_file():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise Refused(f"could not read {meta_path}: {error}") from error
+        if not isinstance(meta, dict):
+            raise Refused(f"{meta_path} must be a JSON object")
+        viewer_id = meta.get("id")
+        if not isinstance(viewer_id, str) or not viewer_id:
+            viewer_id = directory.name
+        listed = meta.get("compatible_versions")
+        if not isinstance(listed, list):
+            listed = []
+        viewers.append({"id": viewer_id, "compatible_versions": [item for item in listed if isinstance(item, str)]})
+    return viewers
+
+
+def unregistered_viewers(viewers: list[dict], version: str) -> list[str]:
+    return [viewer["id"] for viewer in viewers if version not in viewer["compatible_versions"]]
+
+
 def cmd_versions(root: Path, args) -> dict:
     versions = saved_versions(root, args.definition)
     logged = set(logged_versions(changelog_path(root, args.definition)))
+    viewers = saved_viewers(root, args.definition)
     return {"definition": args.definition,
-            "versions": [{**v, "logged": v["version"] in logged} for v in versions]}
+            "versions": [{**version, "logged": version["version"] in logged,
+                          "unregistered_viewers": unregistered_viewers(viewers, version["version"])}
+                         for version in versions]}
 
 
 def cmd_changelog_show(root: Path, args) -> dict:
     path = changelog_path(root, args.definition)
     versions = saved_versions(root, args.definition)
     logged = set(logged_versions(path))
+    viewers = saved_viewers(root, args.definition)
+    gaps = []
+    for version in versions:
+        omitted = unregistered_viewers(viewers, version["version"])
+        if omitted:
+            gaps.append({"version": version["version"], "viewers": omitted})
     return {"definition": args.definition, "path": str(path),
             "missing": [v["version"] for v in versions if v["version"] not in logged],
+            "viewer_gaps": gaps,
             "text": path.read_text() if path.is_file() else None}
 
 
@@ -93,6 +137,17 @@ def cmd_changelog_add(root: Path, args) -> dict:
         raise Refused(f"--previous {previous} is not a saved version of {args.definition!r}")
     if previous is None and not args.change:
         args.change = ["First saved version."]
+    viewers = saved_viewers(root, args.definition)
+    missing = unregistered_viewers(viewers, args.version)
+    if args.version == order[-1] and missing:
+        names = ", ".join(missing)
+        raise Refused(
+            f"saved viewer(s) {names} do not list version {args.version}. "
+            "This environment already has a viewer, so this version is not done until each viewer "
+            "is compatible with it and registered for it: check the page on an instance of this version "
+            "(export --trial, or view_instance while it runs), update the page if it draws the new state wrong, "
+            "then add-version with that instance (or save-viewer --approved listing this version). "
+            "See the viewers reference.")
     if not args.change:
         raise Refused("give at least one --change describing what differs from the previous version")
     date = args.date or next(v["saved"] for v in versions if v["version"] == args.version)
@@ -110,7 +165,8 @@ def cmd_changelog_add(root: Path, args) -> dict:
     body = f"## {rest}" if rest else ""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(head.rstrip("\n") + "\n\n" + entry + ("\n" + body if body else ""))
-    return {"definition": args.definition, "version": args.version, "previous": previous, "path": str(path)}
+    return {"definition": args.definition, "version": args.version, "previous": previous, "path": str(path),
+            "unregistered_viewers": missing}
 
 
 def slug(text: str) -> str:
@@ -158,19 +214,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="environments root")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("versions", help="saved versions of a definition, oldest first, and whether each has a changelog entry")
+    p = sub.add_parser("versions", help="saved versions, oldest first, with changelog entries and viewers that omit each one")
     p.add_argument("definition")
 
-    p = sub.add_parser("changelog-show", help="print a definition's changelog and list saved versions without an entry")
+    p = sub.add_parser("changelog-show", help="print the changelog, versions without an entry, and versions a viewer omits")
     p.add_argument("definition")
 
-    p = sub.add_parser("changelog-add", help="add the entry for a saved version")
+    p = sub.add_parser("changelog-add", help="add the entry for a saved version; the newest is refused while a viewer omits it")
     p.add_argument("definition")
     p.add_argument("--version", required=True, help="full version hash from save_environment")
     p.add_argument("--previous", help="version it was derived from; defaults to the preceding saved version")
     p.add_argument("--change", action="append", default=[], help="one change from the previous version; repeat")
     p.add_argument("--why", help="the reason for the change")
-    p.add_argument("--compatibility", help="effect on report templates, viewers or runs pinned to earlier versions")
+    p.add_argument("--compatibility", help="effect on report templates and in-flight runs; name each viewer re-checked for this version")
     p.add_argument("--date", help="YYYY-MM-DD; defaults to the version's save date")
 
     p = sub.add_parser("recommend", help="record a harness-level change for the maintainers")

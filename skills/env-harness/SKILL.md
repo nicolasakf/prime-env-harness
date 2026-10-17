@@ -128,8 +128,10 @@ play. Saved protocol 1 environments retain their human/agent IDs and transcript.
    (`environments.validate_environment`). On failure repair and revalidate, at most
    three repair passes after the initial attempt. Any edit invalidates a prior pass.
 6. Save only passed, unchanged content (`environments.save_environment(draft=..., id=...)`).
-   Show the saved definition, then tell the user to run `/env enter <id>`. Saving
-   never enters.
+   When this is a new version of an existing definition that already has a viewer,
+   make that viewer compatible and register the version before the changelog, as
+   the `environments` skill describes. Show the saved definition, then tell the
+   user to run `/env enter <id>`. Saving never enters.
 7. The user enters, then uses `/env observe`, `/env act`, `/env status`. Agent
    seats are separate private sessions that the host wakes; you do not play.
    For agents-only runs you may provision with `environments.start_instance`

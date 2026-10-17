@@ -943,7 +943,11 @@ only when the user explicitly asks; building an environment never includes one
 by default. Using an existing
 compatible viewer is the default: when the user asks for a run, the builder
 launches the viewer without asking (`view_instance` for a running instance, a
-replay export for an ended one). The environments
+replay export for an ended one). When a new version of a definition is saved
+and that definition already has a viewer, the builder checks the page against
+the new version, updates it when the state shape changed, and registers the
+version before the changelog entry. The maintenance tool refuses a changelog
+for the newest version while a saved viewer omits it. The environments
 skill's `assets/viewers/viewer_tool.py` saves viewer source under
 `viewers/<definition-id>/<viewer-id>/` with the definition versions it supports,
 and exports one self-contained HTML file per run under
@@ -989,11 +993,13 @@ holds only version directories):
 
 | Location | Content |
 | --- | --- |
-| `changelogs/<definition-id>/CHANGELOG.md` | One entry per saved version, newest first: what changed from the previous version, why, and the effect on report templates and viewers pinned to older versions |
+| `changelogs/<definition-id>/CHANGELOG.md` | One entry per saved version, newest first: what changed from the previous version, why, and the effect on report templates and viewers. A definition that already has a viewer is not logged at its newest version until each viewer lists that version |
 | `harness-recommendations/<date>-<slug>.md` | One harness-level change the builder could not make: problem (generic), evidence, proposed change, optional workaround, `Status: open` |
 
-The builder writes a changelog entry whenever it saves a version. The
-`environments` skill's `assets/maintenance/maintenance_tool.py` writes both
+The builder writes a changelog entry whenever it saves a version. When the
+definition already has a viewer, it registers that viewer for the new version
+first: the page must be compatible, and `compatible_versions` must list the
+hash. The `environments` skill's `assets/maintenance/maintenance_tool.py` writes both
 kinds of note and lists saved versions that have no entry; its
 [maintenance reference](../skills/environments/references/maintenance.md) defines
 the rules and the entry format. The user reviews `harness-recommendations/` and

@@ -69,16 +69,25 @@ is not allowed. Run it from the REPL with `subprocess.run([sys.executable, path,
 |---|---|
 | `recommend --title ... --problem ... --evidence ... --proposal ... [--workaround ...] [--definition id --version hash]` | Save a harness recommendation (`Status: open`) |
 | `recommendations [--status open]` | List saved recommendations; check before writing a duplicate |
-| `versions <definition>` | Saved versions, oldest first, and whether each has a changelog entry |
-| `changelog-add <definition> --version <hash> --change "..." [--change ...] [--why ...] [--compatibility ...]` | Add the entry for a version you just saved |
-| `changelog-show <definition>` | Print the changelog and list saved versions that have no entry |
+| `versions <definition>` | Saved versions, oldest first, whether each has a changelog entry, and which saved viewers do not list it |
+| `changelog-add <definition> --version <hash> --change "..." [--change ...] [--why ...] [--compatibility ...]` | Add the entry for a version you just saved. Refuses the newest version while a saved viewer omits it |
+| `changelog-show <definition>` | Print the changelog, list saved versions that have no entry, and list versions a saved viewer does not list |
 
 ## Changelog between versions
 
 Saving a changed environment creates a new immutable version (a content hash).
 Hashes say nothing about what differs. Every time you save a new version of an
-existing definition, write a short changelog entry for it as the last step, right
-after `save_environment` returns the version hash:
+existing definition, finish it in this order before you present it:
+
+1. **Viewer.** If the definition has a saved viewer, that viewer must be
+   compatible with the new version and registered for it. Live view and replay
+   ignore a version the viewer does not list. The check, the page update, and
+   `add-version` are in [viewers](viewers.md). Skip this only when
+   `<root>/viewers/<definition-id>/` has no viewer. Do not create a viewer
+   because you saved a version.
+2. **Changelog.** Write a short entry for the hash `save_environment` returned.
+   `changelog-add` refuses the newest saved version while a viewer omits it, so
+   the entry comes after registration.
 
 ```python
 import subprocess, sys
@@ -108,13 +117,19 @@ what is different now:
   of the code; do not list refactors that change nothing observable (say
   "internal cleanup" if you must).
 - **Why**: the run, failure, or user request that caused it. One sentence.
-- **Compatibility**: say whether report templates or viewers pinned to earlier
-  versions still apply, and whether in-flight instances (which stay on their
-  version) behave differently from new ones. Leave it out when nothing is affected.
+- **Compatibility**: when a saved viewer exists, name it and record that it was
+  re-checked on this version and now lists the hash. Also say whether report
+  templates pinned to earlier versions still apply, and whether in-flight
+  instances (which stay on their version) behave differently from new ones.
+  Leave the line out only when there is no viewer and nothing else is affected.
 
 Do not edit past entries except to correct a mistake. If a change belongs to the
 same save, it is one entry. Run `changelog-show` when you are unsure whether the
-log is up to date; it lists saved versions that have no entry. To write entries
-for versions saved before this practice, compare each version's source with the
-one before it (`versions` gives the order) and add the entries in order, oldest
-first, passing `--date` only if the save date is wrong.
+log is up to date; it lists saved versions that have no entry, and versions a
+saved viewer does not list. `changelog-add` enforces viewer registration on the
+newest saved version only, so an entry for an older version can be written when
+the current viewer never listed it. `versions` still reports that gap. To write
+entries for versions saved before this practice, compare each version's source
+with the one before it (`versions` gives the order) and add the entries in
+order, oldest first, passing `--date` only if the save date is wrong. Register
+the viewer before backfilling the newest version.

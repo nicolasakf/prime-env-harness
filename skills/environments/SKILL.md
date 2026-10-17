@@ -18,7 +18,10 @@ Stay on the environment side of the line: you create and edit environments, and 
 never edit the harness (its code, the SDK and runner copies in a draft, skills, prompts).
 When a problem is a harness problem, or when you save a new version of an existing
 environment, read [maintenance](references/maintenance.md): it covers harness
-recommendations and the changelog you write for every new version.
+recommendations and the changelog you write for every new version. If that
+environment already has a viewer, also read [viewers](references/viewers.md): the
+viewer must be compatible with the new version and registered for it before the
+changelog.
 
 Read [the authoring contract](references/contract.md) when implementing the
 manifest, SDK methods, schemas, dependencies, and checks. Read
@@ -104,8 +107,12 @@ After applying the requested policy, validate automatically in the selected
 backend without asking for separate validation approval. Read failures and repair
 at most three times. Changes invalidate validation. Save only passed, unchanged content.
 Present the saved definition and wait for `/env enter`; saving never enters.
-When the save created a new version of a definition that already existed, add its
-changelog entry first (see [maintenance](references/maintenance.md)).
+When the save created a new version of a definition that already existed, finish
+that version before presenting it. If the definition has a saved viewer, make the
+viewer compatible with the new version and register the version on it (see
+[viewers](references/viewers.md)); the changelog tool refuses the newest version
+until every saved viewer lists it. Then add the changelog entry (see
+[maintenance](references/maintenance.md)).
 For programmatic provisioning, ask before starting runs because they consume
 model tokens. Existing user authorization suffices; do not ask repeatedly.
 

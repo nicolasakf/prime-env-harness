@@ -55,6 +55,43 @@ class MaintenanceToolTest(unittest.TestCase):
         _, result = self.run_tool("changelog-show", DEFINITION)
         self.assertEqual(result["missing"], [SECOND])
 
+    def write_viewer(self, *versions, viewer="replay"):
+        dest = self.root / "viewers" / DEFINITION / viewer
+        dest.mkdir(parents=True)
+        (dest / "viewer.json").write_text(json.dumps({"id": viewer, "compatible_versions": list(versions)}))
+
+    def test_newest_changelog_waits_until_every_viewer_lists_the_version(self):
+        self.write_viewer(FIRST)
+        self.write_viewer(FIRST, SECOND, viewer="scoreboard")
+        code, refused = self.run_tool("changelog-add", DEFINITION, "--version", SECOND, "--change", "Rounds end on a tie.")
+        self.assertEqual(code, 1)
+        self.assertIn("replay", refused["refused"])
+        self.assertNotIn("scoreboard", refused["refused"])
+        self.assertFalse((self.root / "changelogs" / DEFINITION / "CHANGELOG.md").exists())
+
+        code, older = self.run_tool("changelog-add", DEFINITION, "--version", FIRST)
+        self.assertEqual((code, older["unregistered_viewers"]), (0, []))
+        _, shown = self.run_tool("changelog-show", DEFINITION)
+        self.assertEqual(shown["viewer_gaps"], [{"version": SECOND, "viewers": ["replay"]}])
+        _, listed = self.run_tool("versions", DEFINITION)
+        by_version = {item["version"]: item["unregistered_viewers"] for item in listed["versions"]}
+        self.assertEqual(by_version, {FIRST: [], SECOND: ["replay"]})
+
+        meta_path = self.root / "viewers" / DEFINITION / "replay" / "viewer.json"
+        meta = json.loads(meta_path.read_text())
+        meta["compatible_versions"].append(SECOND)
+        meta_path.write_text(json.dumps(meta))
+        code, added = self.run_tool("changelog-add", DEFINITION, "--version", SECOND, "--change", "Rounds end on a tie.")
+        self.assertEqual((code, added["unregistered_viewers"]), (0, []))
+
+    def test_unreadable_viewer_metadata_is_refused(self):
+        dest = self.root / "viewers" / DEFINITION / "replay"
+        dest.mkdir(parents=True)
+        (dest / "viewer.json").write_text("{")
+        code, result = self.run_tool("changelog-add", DEFINITION, "--version", SECOND, "--change", "x")
+        self.assertEqual(code, 1)
+        self.assertIn("viewer.json", result["refused"])
+
     def test_recommendations_are_stored_and_listed_by_status(self):
         _, first = self.run_tool("recommend", "--title", "Cap wake fan-out", "--problem", "p", "--evidence", "e",
                                  "--proposal", "q", "--definition", DEFINITION, "--version", FIRST)
