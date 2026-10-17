@@ -209,7 +209,7 @@
       const stats = state.stats[seat];
       const stack = state.players[seat].stack;
       const net = stack + state.players[seat].total_paid - start;
-      return el("tr", {}, el("td", {}, seat), el("td", {}, stack),
+      return el("tr", {}, el("td", { title: seat }, seat), el("td", {}, stack),
         el("td", { class: `gain ${net > 0 ? "up" : net < 0 ? "down" : ""}` }, net > 0 ? `+${net}` : net),
         el("td", {}, stats.pots_won), el("td", {}, stats.raises), el("td", {}, stats.folds));
     });
