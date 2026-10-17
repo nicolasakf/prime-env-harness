@@ -42,7 +42,7 @@ const COMMANDS: &[Command] = &[
     Command { name: "view", arguments: "[public] | <instance>", description: "Open the environment's live viewer in your browser", example: "view", participant: true },
     Command { name: "list", arguments: "", description: "List saved environment IDs and names", example: "list", participant: false },
     Command { name: "catalog", arguments: "", description: "Show the detailed saved environment catalog", example: "catalog", participant: false },
-    Command { name: "create", arguments: "<description>", description: "Build a new environment draft", example: "create a small card game", participant: false },
+    Command { name: "create", arguments: "<description>", description: "Build a new environment draft", example: "create a blackjack game where a human is a dealer and it plays against up to six AI models.", participant: false },
     Command { name: "inspect", arguments: "<id>", description: "Inspect a saved definition", example: "inspect cards", participant: false },
     Command { name: "policy", arguments: "<draft> <JSON>", description: "Select draft execution permissions", example: "policy /path/to/draft {\"backend\":\"local\"}", participant: false },
     Command { name: "validate", arguments: "<draft>", description: "Run the draft's behavioral checks", example: "validate /path/to/draft", participant: false },
@@ -510,7 +510,10 @@ mod tests {
             }
         );
         let example = lookup(&provider, "/env create ");
-        assert_eq!(example.items[0].value, "create a small card game");
+        assert_eq!(
+            example.items[0].value,
+            "create a blackjack game where a human is a dealer and it plays against up to six AI models."
+        );
         assert!(example.items[0]
             .description
             .as_deref()

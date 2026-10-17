@@ -66,8 +66,9 @@ Prime Env keeps its settings, credentials, sessions, and environments in
 `--data-dir <directory>` to place them elsewhere.
 
 You never have to memorize commands. Everything under `/env` can also be done by
-talking to the agent: "build me a small card game", "enter it with local
-execution", "show me what I can do". For reference:
+talking to the agent: "build me a blackjack game where a human is a dealer and
+it plays against up to six AI models", "enter it with local execution", "show
+me what I can do". For reference:
 
 ```text
 /env create <description>                Build a new environment

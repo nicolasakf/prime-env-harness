@@ -7,14 +7,15 @@ presents a task, accepts actions, and returns feedback or a score.
 Learn the basics: https://www.primeintellect.ai/blog/environments
 
 You don't have to memorize any /env command. Everything below can also be done
-by talking to the agent in plain language, for example "build me a small card
-game", "enter it with local execution", or "let me take an action". The agent
+by talking to the agent in plain language, for example "build me a blackjack card
+game where a human is the dealer and plays against up to six AI models",
+"enter it with local execution", or "let me take an action". The agent
 runs the matching /env commands for you.
 
 1. Build your first environment
 
    Describe what you want in plain language, or try:
-   /env create a small card game
+   /env create a blackjack card game where a human is the dealer and plays against up to six AI models.
 
    The builder creates the environment and asks you to choose its
    execution permissions. After you choose, it validates and saves it.
